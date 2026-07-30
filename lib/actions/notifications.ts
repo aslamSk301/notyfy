@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { sendNotificationCore } from '@/lib/send-notification-core'
 import { z } from 'zod'
 
 const sendSchema = z.object({
@@ -70,7 +71,7 @@ export async function getAllNotifications() {
   return { notifications: enriched, error: error?.message }
 }
 
-/** Send a push notification via the API route (calls /api/notifications/send internally) */
+/** Send a push notification — directly calls core logic, no internal HTTP fetch */
 export async function sendNotification(_prevState: unknown, formData: FormData) {
   const raw = {
     projectId: formData.get('projectId') as string,
@@ -85,7 +86,7 @@ export async function sendNotification(_prevState: unknown, formData: FormData) 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  // Validate project ownership
+  // Validate project ownership before calling core logic
   const { data: project } = await supabase
     .from('projects')
     .select('id, firebase_json_path')
@@ -95,29 +96,21 @@ export async function sendNotification(_prevState: unknown, formData: FormData) 
 
   if (!project) return { error: 'Project not found' }
   if (!project.firebase_json_path) {
-    return { error: 'No Firebase credentials uploaded for this project' }
+    return { error: 'No Firebase credentials uploaded for this project. Go to Projects and upload your Firebase Service Account JSON.' }
   }
 
-  // Call the internal API route
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const response = await fetch(`${baseUrl}/api/notifications/send`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: parsed.data.projectId,
-      title: parsed.data.title,
-      body: parsed.data.body,
-      // Pass user session via service token — the API validates project ownership
-      _userId: user.id,
-    }),
-  })
+  // Directly call core logic — no self-referential HTTP fetch
+  const result = await sendNotificationCore(
+    user.id,
+    parsed.data.projectId,
+    parsed.data.title,
+    parsed.data.body,
+  )
 
-  const result = await response.json()
-
-  if (!response.ok || !result.success) {
+  if (!result.success) {
     return { error: result.error ?? 'Failed to send notification' }
   }
 
   revalidatePath('/dashboard/notifications')
-  return { success: true, recipientCount: result.data?.recipientCount ?? 0 }
+  return { success: true, recipientCount: result.recipientCount ?? 0 }
 }
