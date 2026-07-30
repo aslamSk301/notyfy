@@ -110,8 +110,17 @@ export async function sendNotificationCore(
     const result = await sendMulticastNotification(firebaseApp, tokens, title, body)
     successCount = result.successCount
     failureCount = result.failureCount
-    // Mark sent if at least one device received it
     finalStatus = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
+
+    // ── 6a. Auto-cleanup dead tokens (app uninstalled) ──────────────────
+    if (result.deadTokens.length > 0) {
+      console.log(`[Send] Removing ${result.deadTokens.length} dead token(s) from DB`)
+      await adminClient
+        .from('devices')
+        .delete()
+        .in('fcm_token', result.deadTokens)
+        .eq('project_id', projectId)
+    }
   } catch (err) {
     console.error('[Send] FCM multicast error:', err)
     failureCount = tokens.length

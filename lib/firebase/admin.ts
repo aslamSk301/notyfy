@@ -62,24 +62,34 @@ export function getFirebaseApp(projectId: string, credentials: FirebaseCredentia
 /**
  * Send a multicast FCM push notification to a list of device tokens.
  * Automatically chunks into batches of 500 (FCM v1 API limit).
+ * Returns dead tokens so the caller can remove them from the DB.
  *
- * @returns successCount and failureCount across all batches
+ * @returns successCount, failureCount, and deadTokens (uninstalled devices)
  */
 export async function sendMulticastNotification(
   app: App,
   tokens: string[],
   title: string,
   body: string
-): Promise<{ successCount: number; failureCount: number }> {
+): Promise<{ successCount: number; failureCount: number; deadTokens: string[] }> {
   if (tokens.length === 0) {
-    return { successCount: 0, failureCount: 0 }
+    return { successCount: 0, failureCount: 0, deadTokens: [] }
   }
 
   const messaging = getMessaging(app)
 
+  // These FCM error codes mean the token is permanently invalid
+  // (app uninstalled, app data cleared, token expired)
+  const DEAD_TOKEN_CODES = new Set([
+    'messaging/registration-token-not-registered',
+    'messaging/invalid-registration-token',
+    'messaging/invalid-argument',
+  ])
+
   const CHUNK_SIZE = 500
   let totalSuccess = 0
   let totalFailure = 0
+  const deadTokens: string[] = []
 
   for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
     const chunk = tokens.slice(i, i + CHUNK_SIZE)
@@ -109,24 +119,25 @@ export async function sendMulticastNotification(
       totalSuccess += response.successCount
       totalFailure += response.failureCount
 
-      if (response.failureCount > 0) {
-        response.responses.forEach((resp, idx) => {
-          if (!resp.success) {
-            console.error(
-              `[FCM] Token failed: ${chunk[idx]}`,
-              resp.error?.code,
-              resp.error?.message
-            )
+      // Check each failed token — collect dead ones for DB cleanup
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success) {
+          const code = resp.error?.code ?? ''
+          console.error(`[FCM] Token failed: code=${code}`)
+
+          if (DEAD_TOKEN_CODES.has(code)) {
+            // Token is permanently dead — app uninstalled or token invalid
+            deadTokens.push(chunk[idx])
           }
-        })
-      }
+        }
+      })
     } catch (err) {
       console.error('[FCM] Multicast chunk error:', err)
       totalFailure += chunk.length
     }
   }
 
-  return { successCount: totalSuccess, failureCount: totalFailure }
+  return { successCount: totalSuccess, failureCount: totalFailure, deadTokens }
 }
 
 /**
