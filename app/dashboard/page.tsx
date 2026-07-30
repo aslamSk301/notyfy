@@ -6,23 +6,35 @@ import Link from 'next/link'
 async function getDashboardStats(userId: string) {
   const supabase = await createClient()
 
-  const [projectsRes, notificationsRes, devicesRes] = await Promise.all([
-    supabase.from('projects').select('id', { count: 'exact' }).eq('user_id', userId),
+  // Step 1: get user's project IDs
+  const { data: projects, count: projectCount } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact' })
+    .eq('user_id', userId)
+
+  const projectIds = (projects ?? []).map((p: { id: string }) => p.id)
+
+  if (projectIds.length === 0) {
+    return { projectCount: 0, notificationCount: 0, deviceCount: 0, sentCount: 0 }
+  }
+
+  // Step 2: count notifications and devices using the project IDs
+  const [notificationsRes, devicesRes] = await Promise.all([
     supabase
       .from('notifications')
-      .select('id, project_id, status, projects!inner(user_id)', { count: 'exact' })
-      .eq('projects.user_id', userId),
+      .select('id, status', { count: 'exact' })
+      .in('project_id', projectIds),
     supabase
       .from('devices')
-      .select('id, project_id, projects!inner(user_id)', { count: 'exact' })
-      .eq('projects.user_id', userId),
+      .select('id', { count: 'exact' })
+      .in('project_id', projectIds),
   ])
 
   const sentCount =
-    notificationsRes.data?.filter((n) => n.status === 'sent').length ?? 0
+    notificationsRes.data?.filter((n: { status: string }) => n.status === 'sent').length ?? 0
 
   return {
-    projectCount: projectsRes.count ?? 0,
+    projectCount: projectCount ?? 0,
     notificationCount: notificationsRes.count ?? 0,
     deviceCount: devicesRes.count ?? 0,
     sentCount,

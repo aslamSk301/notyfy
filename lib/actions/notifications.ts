@@ -42,7 +42,7 @@ export async function getAllNotifications() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { notifications: [], error: 'Not authenticated' }
 
-  // Get user's project IDs first
+  // Step 1: get project IDs belonging to this user
   const { data: projects } = await supabase
     .from('projects')
     .select('id, name')
@@ -52,14 +52,22 @@ export async function getAllNotifications() {
 
   const projectIds = projects.map((p) => p.id)
 
+  // Step 2: fetch notifications by project IDs (no cross-table filter needed)
   const { data, error } = await supabase
     .from('notifications')
-    .select('*, projects(name)')
+    .select('*')
     .in('project_id', projectIds)
     .order('created_at', { ascending: false })
     .limit(200)
 
-  return { notifications: data ?? [], error: error?.message }
+  // Step 3: attach project name client-side (avoids problematic join)
+  const projectMap = Object.fromEntries(projects.map((p) => [p.id, p.name]))
+  const enriched = (data ?? []).map((n) => ({
+    ...n,
+    projects: { name: projectMap[n.project_id] ?? '—' },
+  }))
+
+  return { notifications: enriched, error: error?.message }
 }
 
 /** Send a push notification via the API route (calls /api/notifications/send internally) */
