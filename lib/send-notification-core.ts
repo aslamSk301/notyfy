@@ -1,6 +1,6 @@
 /**
- * Core notification send logic — used by both the Server Action and API route.
- * Replaces Supabase admin client with Drizzle + D1 + R2.
+ * Core notification send logic.
+ * Uses FCM HTTP v1 REST API (no firebase-admin SDK).
  * SERVER-ONLY — never import from client components.
  */
 
@@ -8,11 +8,15 @@ import { eq, inArray } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects, devices, notifications } from '@/lib/db/schema'
 import { downloadFromR2 } from '@/lib/r2/client'
-import { getFirebaseApp, sendMulticastNotification } from '@/lib/firebase/admin'
+import {
+  sendMulticastNotification,
+  validateFirebaseCredentials,
+  type FirebaseCredentials,
+} from '@/lib/firebase/admin'
 import { generateSecureToken } from '@/lib/utils'
 
 export interface SendResult {
-  success:        boolean
+  success:         boolean
   notificationId?: string
   recipientCount?: number
   failureCount?:   number
@@ -40,7 +44,10 @@ export async function sendNotificationCore(
   }
 
   if (!project.firebaseJsonPath) {
-    return { success: false, error: 'No Firebase credentials configured for this project' }
+    return {
+      success: false,
+      error:   'No Firebase credentials configured for this project',
+    }
   }
 
   // ── 2. Download Firebase JSON from R2 ────────────────────────────────────
@@ -50,26 +57,19 @@ export async function sendNotificationCore(
     return { success: false, error: 'Failed to load Firebase credentials from storage' }
   }
 
-  let credentials: Record<string, unknown>
+  let credentials: FirebaseCredentials
   try {
-    credentials = JSON.parse(fileContent)
+    const parsed = JSON.parse(fileContent) as Record<string, unknown>
+    const validation = validateFirebaseCredentials(parsed)
+    if (!validation.valid) {
+      return { success: false, error: `Invalid Firebase credentials: ${validation.error}` }
+    }
+    credentials = parsed as FirebaseCredentials
   } catch {
     return { success: false, error: 'Firebase credentials file is not valid JSON' }
   }
 
-  // ── 3. Initialize per-project Firebase Admin app ──────────────────────────
-  let firebaseApp
-  try {
-    firebaseApp = getFirebaseApp(
-      projectId,
-      credentials as Parameters<typeof getFirebaseApp>[1]
-    )
-  } catch (err) {
-    console.error('[Send] Firebase init error:', err)
-    return { success: false, error: 'Failed to initialize Firebase Admin SDK' }
-  }
-
-  // ── 4. Fetch all FCM tokens for this project ──────────────────────────────
+  // ── 3. Fetch all FCM tokens for this project ──────────────────────────────
   const deviceRows = await db
     .select({ fcmToken: devices.fcmToken })
     .from(devices)
@@ -77,7 +77,7 @@ export async function sendNotificationCore(
 
   const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
 
-  // ── 5. Insert notification record as "pending" ────────────────────────────
+  // ── 4. Insert notification record as "pending" ────────────────────────────
   const notificationId = generateSecureToken(16)
   await db.insert(notifications).values({
     id:             notificationId,
@@ -88,20 +88,20 @@ export async function sendNotificationCore(
     recipientCount: tokens.length,
   })
 
-  // ── 6. Send FCM multicast ─────────────────────────────────────────────────
+  // ── 5. Send via FCM HTTP v1 REST API ─────────────────────────────────────
   let successCount = 0
   let failureCount = 0
   let finalStatus: 'sent' | 'failed' = 'failed'
 
   try {
-    const result = await sendMulticastNotification(firebaseApp, tokens, title, body)
+    const result = await sendMulticastNotification(credentials, tokens, title, body)
     successCount = result.successCount
     failureCount = result.failureCount
     finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
 
-    // ── 6a. Auto-cleanup dead tokens (app uninstalled) ────────────────────
+    // ── 5a. Auto-cleanup dead tokens (app uninstalled) ────────────────────
     if (result.deadTokens.length > 0) {
-      console.log(`[Send] Removing ${result.deadTokens.length} dead token(s)`)
+      console.log(`[Send] Removing ${result.deadTokens.length} dead token(s) from DB`)
       await db
         .delete(devices)
         .where(inArray(devices.fcmToken, result.deadTokens))
@@ -109,9 +109,13 @@ export async function sendNotificationCore(
   } catch (err) {
     console.error('[Send] FCM error:', err)
     failureCount = tokens.length
+    return {
+      success: false,
+      error:   err instanceof Error ? err.message : 'FCM send failed',
+    }
   }
 
-  // ── 7. Update notification record with final status ───────────────────────
+  // ── 6. Update notification record with final status ───────────────────────
   await db
     .update(notifications)
     .set({

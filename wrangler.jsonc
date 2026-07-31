@@ -19,7 +19,7 @@
   ],
 
   "vars": {
-    "NEXT_PUBLIC_APP_URL": "https://notifymvp.pages.dev"
+    "NEXT_PUBLIC_APP_URL": "https://notifymvp.aslamqadri.workers.dev"
   },
 
   "main": ".open-next/worker.js",
