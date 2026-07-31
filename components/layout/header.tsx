@@ -16,17 +16,16 @@ import { toast } from 'sonner'
 
 interface HeaderProps {
   email?: string
-  pageTitle?: string
 }
 
-export function Header({ email, pageTitle }: HeaderProps) {
+export function Header({ email }: HeaderProps) {
   const router = useRouter()
 
   async function handleLogout() {
-    const result = await logout()
-    if (result?.error) {
-      toast.error(result.error)
-    } else {
+    try {
+      await logout()
+    } catch {
+      // logout() calls redirect() which throws — this is expected
       router.push('/login')
       router.refresh()
     }
@@ -34,9 +33,6 @@ export function Header({ email, pageTitle }: HeaderProps) {
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[var(--border)] bg-[var(--background)]/80 px-6 backdrop-blur-sm">
-      {pageTitle && (
-        <h1 className="text-lg font-semibold text-[var(--foreground)]">{pageTitle}</h1>
-      )}
       <div className="ml-auto flex items-center gap-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

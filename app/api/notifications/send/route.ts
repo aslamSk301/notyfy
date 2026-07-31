@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { sendNotificationCore } from '@/lib/send-notification-core'
 import { z } from 'zod'
+import { sendNotificationCore } from '@/lib/send-notification-core'
 
 /**
  * POST /api/notifications/send
  *
- * External REST endpoint — for programmatic sends (e.g. from CI, scripts).
- * Auth: projectId + userId passed in body (must match in DB).
- * Uses the same sendNotificationCore as the Server Action — no duplication.
+ * REST endpoint for programmatic sends (from CI, scripts, other services).
+ * Auth: userId + projectId must match in D1.
+ * Uses the same sendNotificationCore as the Server Action.
  */
 
-const sendSchema = z.object({
-  projectId: z.string().uuid(),
-  title: z.string().min(1).max(100),
-  body: z.string().min(1).max(500),
-  _userId: z.string().min(1),
+const schema = z.object({
+  projectId: z.string().min(1),
+  title:     z.string().min(1).max(100),
+  body:      z.string().min(1).max(500),
+  _userId:   z.string().min(1), // passed server-side only, never from browser
 })
 
 export async function POST(request: NextRequest) {
@@ -22,10 +22,13 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json()
   } catch {
-    return NextResponse.json({ success: false, error: 'Invalid JSON body' }, { status: 400 })
+    return NextResponse.json(
+      { success: false, error: 'Invalid JSON body' },
+      { status: 400 }
+    )
   }
 
-  const parsed = sendSchema.safeParse(body)
+  const parsed = schema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
       { success: false, error: parsed.error.errors[0].message },
@@ -37,11 +40,14 @@ export async function POST(request: NextRequest) {
     parsed.data._userId,
     parsed.data.projectId,
     parsed.data.title,
-    parsed.data.body,
+    parsed.data.body
   )
 
   if (!result.success) {
-    return NextResponse.json({ success: false, error: result.error }, { status: 500 })
+    return NextResponse.json(
+      { success: false, error: result.error },
+      { status: 500 }
+    )
   }
 
   return NextResponse.json({ success: true, data: result })

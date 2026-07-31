@@ -1,15 +1,15 @@
-import { createClient } from '@/lib/supabase/server'
+import { getSession } from '@/lib/auth/session'
+import { redirect } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { User, Shield, Code } from 'lucide-react'
-import { formatDate } from '@/lib/utils'
 
 export const metadata = { title: 'Settings' }
 
 export default async function SettingsPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const session = await getSession()
+  if (!session) redirect('/login')
 
   return (
     <div className="space-y-6">
@@ -20,7 +20,6 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      {/* Account info */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -32,64 +31,53 @@ export default async function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-[var(--muted-foreground)]">Email address</p>
-            <p className="text-sm font-medium text-[var(--foreground)]">{user?.email}</p>
+            <p className="text-sm font-medium text-[var(--foreground)]">{session.email}</p>
           </div>
           <Separator />
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-[var(--muted-foreground)]">Account ID</p>
-            <p className="font-mono text-xs text-[var(--muted-foreground)]">{user?.id}</p>
-          </div>
-          <Separator />
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-[var(--muted-foreground)]">Member since</p>
-            <p className="text-sm text-[var(--foreground)]">
-              {user?.created_at ? formatDate(user.created_at) : '—'}
-            </p>
-          </div>
-          <Separator />
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-[var(--muted-foreground)]">Email verified</p>
-            {user?.email_confirmed_at ? (
-              <Badge variant="success">Verified</Badge>
-            ) : (
-              <Badge variant="warning">Unverified</Badge>
-            )}
+            <p className="font-mono text-xs text-[var(--muted-foreground)]">{session.userId}</p>
           </div>
         </CardContent>
       </Card>
 
-      {/* Security */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Shield className="h-4 w-4 text-[var(--primary)]" />
-            Security
+            Infrastructure
           </CardTitle>
-          <CardDescription>Authentication provider and security settings</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-[var(--muted-foreground)]">Auth provider</p>
-            <Badge variant="secondary">Email / Password</Badge>
+            <p className="text-sm text-[var(--muted-foreground)]">Database</p>
+            <Badge variant="secondary">Cloudflare D1 (SQLite)</Badge>
           </div>
           <Separator />
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-[var(--muted-foreground)]">Last sign-in</p>
-            <p className="text-sm text-[var(--foreground)]">
-              {user?.last_sign_in_at ? formatDate(user.last_sign_in_at) : '—'}
-            </p>
+            <p className="text-sm text-[var(--muted-foreground)]">Storage</p>
+            <Badge variant="secondary">Cloudflare R2</Badge>
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-[var(--muted-foreground)]">Hosting</p>
+            <Badge variant="secondary">Cloudflare Pages</Badge>
+          </div>
+          <Separator />
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-[var(--muted-foreground)]">Auth</p>
+            <Badge variant="secondary">JWT (HS256, 7-day session)</Badge>
           </div>
         </CardContent>
       </Card>
 
-      {/* SDK Reference */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Code className="h-4 w-4 text-[var(--primary)]" />
             SDK Integration
           </CardTitle>
-          <CardDescription>How to register devices from your mobile app</CardDescription>
+          <CardDescription>Device registration API reference</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
@@ -101,29 +89,21 @@ export default async function SettingsPage() {
 Content-Type: application/json
 
 {
-  "appId": "<your-app-id>",
-  "apiKey": "<your-api-key>",
-  "fcmToken": "<firebase-cloud-messaging-token>",
-  "platform": "android" | "ios" | "flutter" | "react-native",
-  "deviceId": "<unique-device-identifier>",
+  "appId":      "<your-app-id>",
+  "apiKey":     "<your-api-key>",
+  "fcmToken":   "<firebase-cloud-messaging-token>",
+  "platform":   "android" | "ios" | "flutter" | "react-native",
+  "deviceId":   "<unique-device-identifier>",
   "appVersion": "1.0.0"  // optional
 }`}</code>
             </pre>
           </div>
           <div>
-            <p className="mb-2 text-sm font-medium text-[var(--foreground)]">Example Response</p>
+            <p className="mb-2 text-sm font-medium text-[var(--foreground)]">Response</p>
             <pre className="overflow-x-auto rounded-md bg-[var(--muted)] p-4 text-xs text-[var(--foreground)]">
-              <code>{`{
-  "success": true,
-  "message": "Device registered successfully"
-}`}</code>
+              <code>{`{ "success": true, "message": "Device registered successfully" }`}</code>
             </pre>
           </div>
-          <p className="text-xs text-[var(--muted-foreground)]">
-            Find your App ID and API Key in the Projects section. The API key authenticates your
-            mobile app — keep it secure and never expose it in client-side code beyond your mobile
-            binary.
-          </p>
         </CardContent>
       </Card>
     </div>

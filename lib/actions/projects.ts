@@ -1,224 +1,214 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { generateAppId, generateSecureToken } from '@/lib/utils'
+import { eq, and } from 'drizzle-orm'
 import { z } from 'zod'
+import { getDb } from '@/lib/db/client'
+import { projects } from '@/lib/db/schema'
+import { requireSession } from '@/lib/auth/session'
+import { uploadToR2, deleteFromR2, buildFirebaseCredentialsKey } from '@/lib/r2/client'
+import { generateAppId, generateSecureToken } from '@/lib/utils'
 
-const createProjectSchema = z.object({
-  name: z.string().min(1, 'Project name is required').max(80, 'Name is too long'),
+const createSchema = z.object({
+  name: z.string().min(1, 'Project name is required').max(80),
 })
 
-const updateProjectSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(1, 'Project name is required').max(80, 'Name is too long'),
+const updateSchema = z.object({
+  id:   z.string().min(1),
+  name: z.string().min(1, 'Project name is required').max(80),
 })
 
-/** Fetch all projects for the authenticated user */
+// ── Read ──────────────────────────────────────────────────────────────────────
+
 export async function getProjects() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { projects: [], error: 'Not authenticated' }
-
-  const { data, error } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-
-  return { projects: data ?? [], error: error?.message }
+  try {
+    const session = await requireSession()
+    const db = await getDb()
+    const rows = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.userId, session.userId))
+      .orderBy(projects.createdAt)
+    return { projects: rows, error: undefined }
+  } catch (e) {
+    return { projects: [], error: (e as Error).message }
+  }
 }
 
-/** Fetch a single project by ID (validates ownership) */
 export async function getProject(id: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { project: null, error: 'Not authenticated' }
-
-  const { data, error } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single()
-
-  return { project: data, error: error?.message }
+  try {
+    const session = await requireSession()
+    const db = await getDb()
+    const [row] = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, id), eq(projects.userId, session.userId)))
+      .limit(1)
+    return { project: row ?? null, error: undefined }
+  } catch (e) {
+    return { project: null, error: (e as Error).message }
+  }
 }
 
-/** Create a new project with auto-generated App ID and API key */
-export async function createProject(_prevState: unknown, formData: FormData) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+// ── Create ────────────────────────────────────────────────────────────────────
 
-  const raw = { name: formData.get('name') as string }
-  const parsed = createProjectSchema.safeParse(raw)
-  if (!parsed.success) return { error: parsed.error.errors[0].message }
+export async function createProject(_prev: unknown, formData: FormData) {
+  try {
+    const session = await requireSession()
+    const parsed = createSchema.safeParse({ name: formData.get('name') })
+    if (!parsed.success) return { error: parsed.error.errors[0].message }
 
-  const firebaseFile = formData.get('firebaseJson') as File | null
-  let firebaseJsonPath: string | null = null
+    const db = await getDb()
+    const projectId = generateSecureToken(16)
 
-  // Upload Firebase JSON if provided
-  if (firebaseFile && firebaseFile.size > 0) {
-    const uploadResult = await uploadFirebaseJson(user.id, firebaseFile)
-    if (uploadResult.error) return { error: uploadResult.error }
-    firebaseJsonPath = uploadResult.path ?? null
+    // Handle optional Firebase JSON upload
+    const firebaseFile = formData.get('firebaseJson') as File | null
+    let firebaseJsonPath: string | null = null
+
+    if (firebaseFile && firebaseFile.size > 0) {
+      const uploadResult = await validateAndUploadFirebaseJson(
+        session.userId, projectId, firebaseFile
+      )
+      if (uploadResult.error) return { error: uploadResult.error }
+      firebaseJsonPath = uploadResult.key ?? null
+    }
+
+    const [created] = await db
+      .insert(projects)
+      .values({
+        id:               projectId,
+        userId:           session.userId,
+        name:             parsed.data.name,
+        appId:            generateAppId(),
+        apiKey:           generateSecureToken(32),
+        firebaseJsonPath,
+      })
+      .returning()
+
+    revalidatePath('/dashboard/projects')
+    return { success: true, project: created }
+  } catch (e) {
+    return { error: (e as Error).message }
   }
+}
 
-  const { data, error } = await supabase
-    .from('projects')
-    .insert({
-      user_id: user.id,
-      name: parsed.data.name,
-      app_id: generateAppId(),
-      api_key: generateSecureToken(32),
-      firebase_json_path: firebaseJsonPath,
+// ── Update ────────────────────────────────────────────────────────────────────
+
+export async function updateProject(_prev: unknown, formData: FormData) {
+  try {
+    const session = await requireSession()
+    const parsed = updateSchema.safeParse({
+      id:   formData.get('id'),
+      name: formData.get('name'),
     })
-    .select()
-    .single()
+    if (!parsed.success) return { error: parsed.error.errors[0].message }
 
-  if (error) return { error: error.message }
+    const db = await getDb()
+    await db
+      .update(projects)
+      .set({ name: parsed.data.name })
+      .where(and(eq(projects.id, parsed.data.id), eq(projects.userId, session.userId)))
 
-  revalidatePath('/dashboard/projects')
-  return { success: true, project: data }
-}
-
-/** Update project name */
-export async function updateProject(_prevState: unknown, formData: FormData) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
-
-  const raw = {
-    id: formData.get('id') as string,
-    name: formData.get('name') as string,
+    revalidatePath('/dashboard/projects')
+    return { success: true }
+  } catch (e) {
+    return { error: (e as Error).message }
   }
-  const parsed = updateProjectSchema.safeParse(raw)
-  if (!parsed.success) return { error: parsed.error.errors[0].message }
-
-  const { error } = await supabase
-    .from('projects')
-    .update({ name: parsed.data.name })
-    .eq('id', parsed.data.id)
-    .eq('user_id', user.id)
-
-  if (error) return { error: error.message }
-
-  revalidatePath('/dashboard/projects')
-  return { success: true }
 }
 
-/** Upload / replace Firebase Service Account JSON for a project */
+// ── Firebase JSON upload ──────────────────────────────────────────────────────
+
 export async function updateFirebaseJson(projectId: string, file: File) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  try {
+    const session = await requireSession()
+    const db = await getDb()
 
-  // Validate project ownership first
-  const { data: project, error: projectError } = await supabase
-    .from('projects')
-    .select('id, firebase_json_path')
-    .eq('id', projectId)
-    .eq('user_id', user.id)
-    .single()
+    // Verify ownership
+    const [project] = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
+      .limit(1)
 
-  if (projectError || !project) return { error: 'Project not found' }
+    if (!project) return { error: 'Project not found' }
 
-  // Delete old file if present
-  if (project.firebase_json_path) {
-    const adminClient = createAdminClient()
-    await adminClient.storage
-      .from('firebase-credentials')
-      .remove([project.firebase_json_path])
+    // Delete old file if exists
+    if (project.firebaseJsonPath) {
+      await deleteFromR2(project.firebaseJsonPath)
+    }
+
+    const result = await validateAndUploadFirebaseJson(session.userId, projectId, file)
+    if (result.error) return { error: result.error }
+
+    await db
+      .update(projects)
+      .set({ firebaseJsonPath: result.key })
+      .where(eq(projects.id, projectId))
+
+    revalidatePath('/dashboard/projects')
+    return { success: true }
+  } catch (e) {
+    return { error: (e as Error).message }
   }
-
-  const uploadResult = await uploadFirebaseJson(user.id, file, projectId)
-  if (uploadResult.error) return { error: uploadResult.error }
-
-  const { error } = await supabase
-    .from('projects')
-    .update({ firebase_json_path: uploadResult.path })
-    .eq('id', projectId)
-    .eq('user_id', user.id)
-
-  if (error) return { error: error.message }
-
-  revalidatePath('/dashboard/projects')
-  return { success: true }
 }
 
-/** Delete a project and all its data (cascade) */
+// ── Delete ────────────────────────────────────────────────────────────────────
+
 export async function deleteProject(projectId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  try {
+    const session = await requireSession()
+    const db = await getDb()
 
-  // Fetch firebase path before deleting so we can clean up storage
-  const { data: project } = await supabase
-    .from('projects')
-    .select('firebase_json_path')
-    .eq('id', projectId)
-    .eq('user_id', user.id)
-    .single()
+    const [project] = await db
+      .select({ firebaseJsonPath: projects.firebaseJsonPath })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
+      .limit(1)
 
-  const { error } = await supabase
-    .from('projects')
-    .delete()
-    .eq('id', projectId)
-    .eq('user_id', user.id)
+    if (!project) return { error: 'Project not found' }
 
-  if (error) return { error: error.message }
+    await db
+      .delete(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
 
-  // Clean up Firebase JSON from storage
-  if (project?.firebase_json_path) {
-    const adminClient = createAdminClient()
-    await adminClient.storage
-      .from('firebase-credentials')
-      .remove([project.firebase_json_path])
+    // Cleanup R2 file
+    if (project.firebaseJsonPath) {
+      await deleteFromR2(project.firebaseJsonPath)
+    }
+
+    revalidatePath('/dashboard/projects')
+    return { success: true }
+  } catch (e) {
+    return { error: (e as Error).message }
   }
-
-  revalidatePath('/dashboard/projects')
-  return { success: true }
 }
 
-// ============================================================
-// Internal helper — uploads Firebase JSON to private bucket
-// ============================================================
-async function uploadFirebaseJson(
+// ── Internal helper ───────────────────────────────────────────────────────────
+
+async function validateAndUploadFirebaseJson(
   userId: string,
-  file: File,
-  projectId?: string
-): Promise<{ path?: string; error?: string }> {
-  // Validate it's a JSON file
+  projectId: string,
+  file: File
+): Promise<{ key?: string; error?: string }> {
   if (!file.name.endsWith('.json') && file.type !== 'application/json') {
-    return { error: 'Firebase credentials must be a JSON file' }
+    return { error: 'Firebase credentials must be a .json file' }
   }
   if (file.size > 100 * 1024) {
-    return { error: 'Firebase JSON file must be under 100 KB' }
+    return { error: 'Firebase JSON must be under 100 KB' }
   }
 
-  // Validate JSON content
+  const text = await file.text()
+
   try {
-    const text = await file.text()
     const json = JSON.parse(text)
-    if (!json.type || json.type !== 'service_account') {
+    if (json.type !== 'service_account') {
       return { error: 'Invalid Firebase service account JSON — missing "type: service_account"' }
     }
   } catch {
     return { error: 'Invalid JSON file' }
   }
 
-  const adminClient = createAdminClient()
-  const storagePath = `${userId}/${projectId ?? 'new'}/firebase-credentials.json`
-
-  const { error: uploadError } = await adminClient.storage
-    .from('firebase-credentials')
-    .upload(storagePath, file, {
-      contentType: 'application/json',
-      upsert: true,
-    })
-
-  if (uploadError) return { error: `Storage upload failed: ${uploadError.message}` }
-
-  return { path: storagePath }
+  const key = buildFirebaseCredentialsKey(userId, projectId)
+  await uploadToR2(key, text)
+  return { key }
 }

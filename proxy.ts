@@ -1,32 +1,45 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { updateSession } from '@/lib/supabase/middleware'
+import { verifySessionToken, COOKIE_NAME } from '@/lib/auth/jwt'
 
 /**
- * Proxy runs on every matching request (Next.js 16+, replaces middleware.ts).
- * It refreshes the Supabase auth session and enforces route protection.
+ * Proxy (Next.js 16+ middleware replacement).
  *
- * API routes (/api/*) are excluded from session handling so their
- * request body is never consumed before the route handler reads it.
+ * Replaces Supabase session handling with JWT cookie verification.
+ * - API routes (/api/*) bypass auth — they handle their own authentication
+ * - Dashboard routes require a valid JWT session cookie
+ * - Auth pages redirect logged-in users to dashboard
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Skip session handling for API routes — they handle their own auth
+  // API routes — skip, handle own auth
   if (pathname.startsWith('/api/')) {
     return NextResponse.next()
   }
 
-  return await updateSession(request)
+  const token = request.cookies.get(COOKIE_NAME)?.value
+  const session = token ? await verifySessionToken(token) : null
+  const isLoggedIn = !!session
+
+  // Protect /dashboard routes
+  if (pathname.startsWith('/dashboard') && !isLoggedIn) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    return NextResponse.redirect(url)
+  }
+
+  // Redirect logged-in users away from auth pages
+  if ((pathname === '/login' || pathname === '/register') && isLoggedIn) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/dashboard'
+    return NextResponse.redirect(url)
+  }
+
+  return NextResponse.next()
 }
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization)
-     * - favicon.ico, public assets
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -1,22 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
+import { eq, and } from 'drizzle-orm'
 import { z } from 'zod'
+import { getDb } from '@/lib/db/client'
+import { projects, devices } from '@/lib/db/schema'
+import { generateSecureToken } from '@/lib/utils'
 
 /**
  * POST /api/device/register
  *
  * Public endpoint — authenticated by appId + apiKey.
- * Used by mobile SDKs to register or update a device FCM token.
+ * Used by mobile SDKs (Flutter, React Native, Android) to register FCM tokens.
  */
 
-const registerSchema = z.object({
-  appId: z.string().min(1, 'appId is required'),
-  apiKey: z.string().min(1, 'apiKey is required'),
-  fcmToken: z.string().min(1, 'fcmToken is required'),
-  platform: z.enum(['android', 'ios', 'flutter', 'react-native'], {
+const schema = z.object({
+  appId:      z.string().min(1, 'appId is required'),
+  apiKey:     z.string().min(1, 'apiKey is required'),
+  fcmToken:   z.string().min(1, 'fcmToken is required'),
+  platform:   z.enum(['android', 'ios', 'flutter', 'react-native'], {
     errorMap: () => ({ message: 'platform must be android, ios, flutter, or react-native' }),
   }),
-  deviceId: z.string().min(1, 'deviceId is required'),
+  deviceId:   z.string().min(1, 'deviceId is required'),
   appVersion: z.string().optional(),
 })
 
@@ -31,7 +34,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const parsed = registerSchema.safeParse(body)
+  const parsed = schema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json(
       { success: false, error: parsed.error.errors[0].message },
@@ -41,46 +44,45 @@ export async function POST(request: NextRequest) {
 
   const { appId, apiKey, fcmToken, platform, deviceId, appVersion } = parsed.data
 
-  // Use admin client to bypass RLS — this is a public API authenticated by apiKey
-  const supabase = createAdminClient()
+  const db = await getDb()
 
-  // Validate appId + apiKey
-  const { data: project, error: projectError } = await supabase
-    .from('projects')
-    .select('id')
-    .eq('app_id', appId)
-    .eq('api_key', apiKey)
-    .single()
+  // Validate appId + apiKey — find matching project
+  const [project] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.appId, appId), eq(projects.apiKey, apiKey)))
+    .limit(1)
 
-  if (projectError || !project) {
+  if (!project) {
     return NextResponse.json(
       { success: false, error: 'Invalid appId or apiKey' },
       { status: 401 }
     )
   }
 
-  // Upsert device — update fcmToken if device already registered
-  const { error: upsertError } = await supabase
-    .from('devices')
-    .upsert(
-      {
-        project_id: project.id,
-        device_id: deviceId,
-        fcm_token: fcmToken,
-        platform,
-        app_version: appVersion ?? null,
-      },
-      {
-        onConflict: 'project_id,device_id',
-      }
-    )
+  // Check if device already registered for this project
+  const [existing] = await db
+    .select({ id: devices.id })
+    .from(devices)
+    .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
+    .limit(1)
 
-  if (upsertError) {
-    console.error('[Device Register] Upsert error:', upsertError)
-    return NextResponse.json(
-      { success: false, error: 'Failed to register device' },
-      { status: 500 }
-    )
+  if (existing) {
+    // Update FCM token (token refresh or reinstall)
+    await db
+      .update(devices)
+      .set({ fcmToken, appVersion: appVersion ?? null })
+      .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
+  } else {
+    // New device — insert
+    await db.insert(devices).values({
+      id:         generateSecureToken(16),
+      projectId:  project.id,
+      deviceId,
+      fcmToken,
+      platform,
+      appVersion: appVersion ?? null,
+    })
   }
 
   return NextResponse.json({ success: true, message: 'Device registered successfully' })

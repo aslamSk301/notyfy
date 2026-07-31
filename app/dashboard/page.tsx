@@ -1,51 +1,50 @@
-import { createClient } from '@/lib/supabase/server'
+import { eq, inArray, and } from 'drizzle-orm'
+import { getDb } from '@/lib/db/client'
+import { projects, devices, notifications } from '@/lib/db/schema'
+import { getSession } from '@/lib/auth/session'
+import { redirect } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FolderOpen, Bell, Smartphone, Activity } from 'lucide-react'
 import Link from 'next/link'
 
 async function getDashboardStats(userId: string) {
-  const supabase = await createClient()
+  const db = await getDb()
 
-  // Step 1: get user's project IDs
-  const { data: projects, count: projectCount } = await supabase
-    .from('projects')
-    .select('id', { count: 'exact' })
-    .eq('user_id', userId)
+  // Step 1 — user's projects
+  const userProjects = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(eq(projects.userId, userId))
 
-  const projectIds = (projects ?? []).map((p: { id: string }) => p.id)
+  const projectIds = userProjects.map((p) => p.id)
 
   if (projectIds.length === 0) {
     return { projectCount: 0, notificationCount: 0, deviceCount: 0, sentCount: 0 }
   }
 
-  // Step 2: count notifications and devices using the project IDs
-  const [notificationsRes, devicesRes] = await Promise.all([
-    supabase
-      .from('notifications')
-      .select('id, status', { count: 'exact' })
-      .in('project_id', projectIds),
-    supabase
-      .from('devices')
-      .select('id', { count: 'exact' })
-      .in('project_id', projectIds),
+  // Step 2 — counts via project IDs
+  const [allNotifications, allDevices] = await Promise.all([
+    db.select({ status: notifications.status })
+      .from(notifications)
+      .where(inArray(notifications.projectId, projectIds)),
+    db.select({ id: devices.id })
+      .from(devices)
+      .where(inArray(devices.projectId, projectIds)),
   ])
 
-  const sentCount =
-    notificationsRes.data?.filter((n: { status: string }) => n.status === 'sent').length ?? 0
-
   return {
-    projectCount: projectCount ?? 0,
-    notificationCount: notificationsRes.count ?? 0,
-    deviceCount: devicesRes.count ?? 0,
-    sentCount,
+    projectCount:      userProjects.length,
+    notificationCount: allNotifications.length,
+    sentCount:         allNotifications.filter((n) => n.status === 'sent').length,
+    deviceCount:       allDevices.length,
   }
 }
 
 export default async function DashboardPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const session = await getSession()
+  if (!session) redirect('/login')
 
-  const stats = await getDashboardStats(user!.id)
+  const stats = await getDashboardStats(session.userId)
 
   const cards = [
     {
@@ -115,54 +114,57 @@ export default async function DashboardPage() {
           <CardTitle className="text-base">Quick Start</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-start gap-3 rounded-md bg-[var(--muted)] p-3">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-xs font-bold text-white">
-              1
-            </span>
-            <div>
-              <p className="text-sm font-medium text-[var(--foreground)]">Create a project</p>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                Go to{' '}
-                <Link href="/dashboard/projects" className="text-[var(--primary)] hover:underline">
-                  Projects
-                </Link>{' '}
-                and create your first project. Upload your Firebase service account JSON.
-              </p>
+          {[
+            {
+              step: 1,
+              title: 'Create a project',
+              desc: (
+                <>
+                  Go to{' '}
+                  <Link href="/dashboard/projects" className="text-[var(--primary)] hover:underline">
+                    Projects
+                  </Link>{' '}
+                  and upload your Firebase service account JSON.
+                </>
+              ),
+            },
+            {
+              step: 2,
+              title: 'Register devices',
+              desc: (
+                <>
+                  Use your App ID + API Key to call{' '}
+                  <code className="rounded bg-[var(--background)] px-1 text-xs text-[var(--primary)]">
+                    POST /api/device/register
+                  </code>{' '}
+                  from your mobile app.
+                </>
+              ),
+            },
+            {
+              step: 3,
+              title: 'Send notifications',
+              desc: (
+                <>
+                  Go to{' '}
+                  <Link href="/dashboard/notifications" className="text-[var(--primary)] hover:underline">
+                    Notifications
+                  </Link>{' '}
+                  and send your first push to all registered devices.
+                </>
+              ),
+            },
+          ].map(({ step, title, desc }) => (
+            <div key={step} className="flex items-start gap-3 rounded-md bg-[var(--muted)] p-3">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-xs font-bold text-white">
+                {step}
+              </span>
+              <div>
+                <p className="text-sm font-medium text-[var(--foreground)]">{title}</p>
+                <p className="text-xs text-[var(--muted-foreground)]">{desc}</p>
+              </div>
             </div>
-          </div>
-          <div className="flex items-start gap-3 rounded-md bg-[var(--muted)] p-3">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-xs font-bold text-white">
-              2
-            </span>
-            <div>
-              <p className="text-sm font-medium text-[var(--foreground)]">Register devices</p>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                Use your App ID and API Key to call{' '}
-                <code className="rounded bg-[var(--background)] px-1 text-xs text-[var(--primary)]">
-                  POST /api/device/register
-                </code>{' '}
-                from your mobile app.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3 rounded-md bg-[var(--muted)] p-3">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--primary)] text-xs font-bold text-white">
-              3
-            </span>
-            <div>
-              <p className="text-sm font-medium text-[var(--foreground)]">Send notifications</p>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                Go to{' '}
-                <Link
-                  href="/dashboard/notifications"
-                  className="text-[var(--primary)] hover:underline"
-                >
-                  Notifications
-                </Link>{' '}
-                and send your first push to all registered devices.
-              </p>
-            </div>
-          </div>
+          ))}
         </CardContent>
       </Card>
     </div>

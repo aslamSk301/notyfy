@@ -67,10 +67,10 @@ export function NotificationTable({ notifications, showProject = false }: Notifi
                 <StatusBadge status={n.status} />
               </td>
               <td className="px-4 py-3 text-right font-mono text-[var(--foreground)]">
-                {n.recipient_count}
+                {n.recipientCount}
               </td>
               <td className="whitespace-nowrap px-4 py-3 text-right text-[var(--muted-foreground)]">
-                {n.sent_at ? formatDate(n.sent_at) : '—'}
+                {n.sentAt ? formatDate(n.sentAt) : '—'}
               </td>
             </tr>
           ))}

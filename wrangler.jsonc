@@ -1,0 +1,42 @@
+{
+  // Cloudflare Workers / Pages configuration for NotifyMVP
+  // Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+  "name": "notifymvp",
+  "compatibility_date": "2024-12-18",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // D1 SQLite database binding
+  "d1_databases": [
+    {
+      "binding": "DB",           // accessed as env.DB in Workers
+      "database_name": "notifymvp-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"  // wrangler d1 create notifymvp-db
+    }
+  ],
+
+  // R2 object storage binding (replaces Supabase Storage)
+  "r2_buckets": [
+    {
+      "binding": "R2",           // accessed as env.R2 in Workers
+      "bucket_name": "firebase-credentials"
+    }
+  ],
+
+  // Environment variables (non-secret)
+  "vars": {
+    "NEXT_PUBLIC_APP_URL": "https://notifymvp.pages.dev"
+  },
+
+  // Secrets set via: wrangler secret put JWT_SECRET
+  // - JWT_SECRET (for signing auth tokens)
+  // These are NOT listed here — use `wrangler secret put <NAME>`
+
+  // OpenNext Cloudflare adapter entrypoint
+  "main": ".open-next/worker.js",
+
+  // Assets for static files
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+}

@@ -103,7 +103,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <div className="space-y-1">
             <CardTitle className="text-base">{project.name}</CardTitle>
             <CardDescription className="text-xs">
-              Created {formatDate(project.created_at)}
+              Created {formatDate(project.createdAt)}
             </CardDescription>
           </div>
           <DropdownMenu>
@@ -141,9 +141,9 @@ export function ProjectCard({ project }: ProjectCardProps) {
               <p className="text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide">
                 App ID
               </p>
-              <CopyButton value={project.app_id} />
+              <CopyButton value={project.appId} />
             </div>
-            <p className="mt-1 font-mono text-sm text-[var(--foreground)]">{project.app_id}</p>
+            <p className="mt-1 font-mono text-sm text-[var(--foreground)]">{project.appId}</p>
           </div>
 
           {/* API Key */}
@@ -152,10 +152,10 @@ export function ProjectCard({ project }: ProjectCardProps) {
               <p className="text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide">
                 API Key
               </p>
-              <CopyButton value={project.api_key} />
+              <CopyButton value={project.apiKey} />
             </div>
             <p className="mt-1 font-mono text-sm text-[var(--foreground)]">
-              {maskApiKey(project.api_key)}
+              {maskApiKey(project.apiKey)}
             </p>
           </div>
 
@@ -163,7 +163,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <div className="flex items-center gap-2">
             <FileJson className="h-4 w-4 text-[var(--muted-foreground)]" />
             <span className="text-xs text-[var(--muted-foreground)]">Firebase credentials:</span>
-            {project.firebase_json_path ? (
+            {project.firebaseJsonPath ? (
               <Badge variant="success">
                 <Check className="mr-1 h-3 w-3" />
                 Configured
