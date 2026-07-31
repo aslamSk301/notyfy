@@ -1,12 +1,8 @@
 /**
  * Drizzle D1 client factory.
  *
- * Two modes:
- * - Cloudflare Workers (production / wrangler dev):
- *     Uses getCloudflareContext() to get the D1 binding from env.DB
- * - Local Next.js dev (npm run dev):
- *     Uses @miniflare/d1 / wrangler's local SQLite file via REST API
- *     Falls back to a local SQLite file via better-sqlite3 if available
+ * - Cloudflare Workers runtime: uses getCloudflareContext() D1 binding
+ * - Local next dev: uses Cloudflare D1 HTTP API via a proper D1 shim
  */
 
 import { drizzle } from 'drizzle-orm/d1'
@@ -14,141 +10,150 @@ import * as schema from './schema'
 
 export type Db = ReturnType<typeof drizzle<typeof schema>>
 
-/**
- * Returns a Drizzle ORM instance bound to D1.
- * Works in both Cloudflare Workers runtime and local Next.js dev.
- */
 export async function getDb(): Promise<Db> {
-  // ── Cloudflare Workers runtime (production + wrangler dev) ───────────────
-  // getCloudflareContext() only works inside the Cloudflare Workers runtime
-  if (process.env.NEXT_RUNTIME === 'edge' || isCloudflareRuntime()) {
+  // ── Cloudflare Workers runtime ────────────────────────────────────────────
+  if (isCloudflareRuntime()) {
     const { getCloudflareContext } = await import('@opennextjs/cloudflare')
     const { env } = await getCloudflareContext({ async: true })
     const cfEnv = env as unknown as CloudflareEnv
     return drizzle(cfEnv.DB, { schema })
   }
 
-  // ── Local Next.js dev — use Cloudflare D1 HTTP API ───────────────────────
-  // Requires: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_D1_DATABASE_ID, CLOUDFLARE_API_TOKEN
-  // Set these in .env for local development
+  // ── Local next dev — D1 HTTP API shim ─────────────────────────────────────
   const accountId  = process.env.CLOUDFLARE_ACCOUNT_ID
   const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID
   const apiToken   = process.env.CLOUDFLARE_API_TOKEN
 
-  if (accountId && databaseId && apiToken) {
-    // Use Cloudflare D1 HTTP API directly via a fetch-based D1 shim
-    const d1HttpBinding = createD1HttpBinding(accountId, databaseId, apiToken)
-    return drizzle(d1HttpBinding, { schema })
+  if (!accountId || !databaseId || !apiToken) {
+    throw new Error(
+      'Missing Cloudflare credentials in .env:\n' +
+      '  CLOUDFLARE_ACCOUNT_ID\n' +
+      '  CLOUDFLARE_D1_DATABASE_ID\n' +
+      '  CLOUDFLARE_API_TOKEN\n'
+    )
   }
 
-  // ── Fallback: local wrangler SQLite file ─────────────────────────────────
-  // Run: npx wrangler d1 execute notifymvp-db --local --file=drizzle/0000_initial.sql
-  // Then use wrangler's local proxy: npx wrangler dev --local
-  throw new Error(
-    'D1 database not configured for local development.\n' +
-    'Options:\n' +
-    '  1. Add CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_D1_DATABASE_ID + CLOUDFLARE_API_TOKEN to .env\n' +
-    '  2. Use: npm run dev:cf  (wrangler dev --local)\n' +
-    'See .env.local.example for setup instructions.'
+  return drizzle(makeD1Shim(accountId, databaseId, apiToken), { schema })
+}
+
+function isCloudflareRuntime(): boolean {
+  return (
+    typeof globalThis !== 'undefined' &&
+    typeof (globalThis as Record<string, unknown>).caches !== 'undefined' &&
+    typeof (globalThis as Record<string, unknown>).Request !== 'undefined' &&
+    typeof process === 'undefined'
   )
 }
 
-/** Detect if we are running inside the Cloudflare Workers runtime */
-function isCloudflareRuntime(): boolean {
-  try {
-    return typeof (globalThis as Record<string, unknown>).caches !== 'undefined' &&
-           typeof (globalThis as Record<string, unknown>).CloudflareError !== 'undefined'
-  } catch {
-    return false
-  }
-}
-
 /**
- * Creates a D1-compatible binding that uses the Cloudflare REST API.
- * This lets local `next dev` talk to a remote D1 database.
+ * Creates a D1Database-compatible shim that proxies all queries
+ * to the Cloudflare D1 HTTP API.
+ *
+ * Drizzle calls: prepare(sql).bind(...params).all() / .first() / .run()
  */
-function createD1HttpBinding(
+function makeD1Shim(
   accountId: string,
   databaseId: string,
   token: string
 ): D1Database {
-  const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}`
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`
   const headers = {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   }
 
-  async function query(sql: string, params: unknown[] = []) {
-    const res = await fetch(`${baseUrl}/query`, {
+  async function execQuery(
+    sql: string,
+    params: unknown[]
+  ): Promise<{ results: Record<string, unknown>[]; meta: unknown }> {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify({ sql, params }),
     })
+
     const json = (await res.json()) as {
       success: boolean
-      result: Array<{ results: unknown[]; success: boolean; meta: unknown }>
-      errors: Array<{ message: string }>
+      result: Array<{ results: Record<string, unknown>[]; success: boolean; meta: unknown }>
+      errors: Array<{ code: number; message: string }>
     }
-    if (!json.success) {
-      throw new Error(json.errors?.[0]?.message ?? 'D1 HTTP query failed')
+
+    if (!json.success || !json.result?.[0]) {
+      const msg = json.errors?.[0]?.message ?? 'D1 HTTP API error'
+      throw new Error(msg)
     }
-    return json.result[0]
+
+    return {
+      results: json.result[0].results ?? [],
+      meta: json.result[0].meta ?? {},
+    }
   }
 
-  // Minimal D1Database-compatible shim
+  function makeStatement(sql: string, boundParams: unknown[] = []): D1PreparedStatement {
+    const stmt: D1PreparedStatement = {
+      bind(...params: unknown[]) {
+        return makeStatement(sql, params)
+      },
+
+      async first<T = Record<string, unknown>>(col?: string): Promise<T | null> {
+        const { results } = await execQuery(sql, boundParams)
+        const row = results[0] ?? null
+        if (row === null) return null
+        if (col !== undefined) return (row[col] as T) ?? null
+        return row as T
+      },
+
+      async all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
+        const { results, meta } = await execQuery(sql, boundParams)
+        return {
+          results: results as T[],
+          success: true,
+          meta,
+        } as D1Result<T>
+      },
+
+      async run(): Promise<D1Result<never>> {
+        const { meta } = await execQuery(sql, boundParams)
+        return { results: [], success: true, meta } as D1Result<never>
+      },
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      raw: (async (options?: { columnNames?: boolean }) => {
+        const { results } = await execQuery(sql, boundParams)
+        if (options?.columnNames && results.length > 0) {
+          const cols = Object.keys(results[0])
+          return [cols, ...results.map((r) => Object.values(r))]
+        }
+        return results.map((r) => Object.values(r))
+      }) as D1PreparedStatement['raw'],
+    }
+    return stmt
+  }
+
   return {
     prepare(sql: string) {
-      let boundParams: unknown[] = []
-      const stmt = {
-        bind(...params: unknown[]) {
-          boundParams = params
-          return stmt
-        },
-        async first<T = unknown>(col?: string): Promise<T | null> {
-          const result = await query(sql, boundParams)
-          const row = (result.results as Record<string, unknown>[])[0] ?? null
-          if (!row) return null
-          return (col ? row[col] : row) as T
-        },
-        async all<T = unknown>() {
-          const result = await query(sql, boundParams)
-          return {
-            results: result.results as T[],
-            success: result.success,
-            meta: result.meta,
-          }
-        },
-        async run() {
-          const result = await query(sql, boundParams)
-          return { success: result.success, meta: result.meta }
-        },
-        async raw<T = unknown[]>() {
-          const result = await query(sql, boundParams)
-          return result.results as T[]
-        },
+      return makeStatement(sql)
+    },
+
+    async batch<T = unknown>(
+      statements: D1PreparedStatement[]
+    ): Promise<D1Result<T>[]> {
+      // Execute sequentially for the HTTP shim
+      const results: D1Result<T>[] = []
+      for (const stmt of statements) {
+        results.push(await stmt.all<T>())
       }
-      return stmt as unknown as D1PreparedStatement
+      return results
     },
-    async batch(statements: D1PreparedStatement[]) {
-      const stmts = statements as unknown as Array<{
-        _sql: string; _params: unknown[]
-      }>
-      const res = await fetch(`${baseUrl}/query`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(stmts.map((s) => ({ sql: s._sql, params: s._params }))),
-      })
-      const json = (await res.json()) as {
-        success: boolean
-        result: Array<{ results: unknown[]; success: boolean; meta: unknown }>
-      }
-      return json.result as D1Result[]
+
+    async exec(query: string): Promise<D1ExecResult> {
+      await execQuery(query, [])
+      return { count: 1, duration: 0 }
     },
-    async exec(query_str: string) {
-      await query(query_str)
-      return { count: 0, duration: 0 }
+
+    dump(): never {
+      throw new Error('dump() not supported in HTTP mode')
     },
-    dump() { throw new Error('dump() not supported in HTTP mode') },
   } as unknown as D1Database
 }
 

@@ -32,7 +32,7 @@ export default async function ProjectsPage() {
           icon={<FolderOpen className="h-6 w-6" />}
           title="No projects yet"
           description="Create a project to get your App ID, API Key, and start sending push notifications."
-          action={<CreateProjectDialog />}
+          action={<><CreateProjectDialog /></>}
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
