@@ -86,7 +86,7 @@ export async function sendNotificationCore(
 
   try {
     if (target === 'tokens') {
-      // Individual token sends
+      // Explicit token-based send
       const deviceRows = await db
         .select({ fcmToken: devices.fcmToken })
         .from(devices)
@@ -98,32 +98,44 @@ export async function sendNotificationCore(
       failureCount = result.failureCount
       finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
 
-      // Cleanup dead tokens
       if (result.deadTokens.length > 0) {
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
       }
-    } else {
-      // Topic-based send — one API call, any number of devices
-      let topicName: string
-
-      if (target.startsWith('topic:')) {
-        // Custom topic: topic:sports → "sports_{appId}"
-        const customName = target.replace('topic:', '')
-        topicName = `${customName}_${project.appId}`
-      } else if (target === 'all') {
-        topicName = `all_${project.appId}`
-      } else {
-        // Platform: android → "android_{appId}"
-        topicName = `${target}_${project.appId}`
-      }
+    } else if (target.startsWith('topic:')) {
+      // Custom topic only — send via FCM topic
+      const customName = target.replace('topic:', '')
+      const topicName  = `${customName}_${project.appId}`
 
       const result = await sendToTopic(credentials, topicName, title, body)
-      if (result.success) {
-        successCount = 1   // topic sends don't return recipient count
-        finalStatus  = 'sent'
-      } else {
-        finalStatus = 'failed'
-        failureCount = 1
+      successCount = result.success ? 1 : 0
+      failureCount = result.success ? 0 : 1
+      finalStatus  = result.success ? 'sent' : 'failed'
+    } else {
+      // 'all' | 'android' | 'ios' | 'flutter' | 'react-native'
+      // Use direct token send — reliable without requiring topic subscriptions
+      const deviceRows = await db
+        .select({ fcmToken: devices.fcmToken, platform: devices.platform })
+        .from(devices)
+        .where(eq(devices.projectId, projectId))
+
+      let filteredTokens = deviceRows
+        .map((d) => ({ token: d.fcmToken, platform: d.platform }))
+        .filter((d) => d.token)
+
+      // Filter by platform if not 'all'
+      if (target !== 'all') {
+        filteredTokens = filteredTokens.filter((d) => d.platform === target)
+      }
+
+      const tokens = filteredTokens.map((d) => d.token)
+
+      const result = await sendMulticastNotification(credentials, tokens, title, body)
+      successCount = result.successCount
+      failureCount = result.failureCount
+      finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
+
+      if (result.deadTokens.length > 0) {
+        await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
       }
     }
   } catch (err) {
