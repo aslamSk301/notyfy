@@ -9,6 +9,8 @@ export type {
   NewProject,
   Device,
   NewDevice,
+  Topic,
+  NewTopic,
   Notification,
   NewNotification,
 } from '@/lib/db/schema'

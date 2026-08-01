@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { eq, inArray, desc } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
-import { projects, notifications } from '@/lib/db/schema'
+import { projects, notifications, topics } from '@/lib/db/schema'
 import { requireSession } from '@/lib/auth/session'
 import { sendNotificationCore } from '@/lib/send-notification-core'
 
@@ -12,6 +12,7 @@ const sendSchema = z.object({
   projectId: z.string().min(1, 'Project is required'),
   title:     z.string().min(1, 'Title is required').max(100),
   body:      z.string().min(1, 'Body is required').max(500),
+  target:    z.string().min(1).default('all'),
 })
 
 /** Fetch all notifications across all user projects */
@@ -78,12 +79,39 @@ export async function getNotifications(projectId: string) {
   }
 }
 
-/** Send a push notification — calls core logic directly (no internal HTTP fetch) */
+/** Fetch all topics for a project */
+export async function getProjectTopics(projectId: string) {
+  try {
+    const session = await requireSession()
+    const db = await getDb()
+
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
+
+    if (!project) return { topics: [] }
+
+    const rows = await db
+      .select()
+      .from(topics)
+      .where(eq(topics.projectId, projectId))
+      .orderBy(topics.name)
+
+    return { topics: rows }
+  } catch (e) {
+    return { topics: [], error: (e as Error).message }
+  }
+}
+
+/** Send a push notification */
 export async function sendNotification(_prev: unknown, formData: FormData) {
   const raw = {
     projectId: formData.get('projectId') as string,
     title:     formData.get('title') as string,
     body:      formData.get('body') as string,
+    target:    (formData.get('target') as string) || 'all',
   }
 
   const parsed = sendSchema.safeParse(raw)
@@ -93,7 +121,6 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
     const session = await requireSession()
     const db = await getDb()
 
-    // Validate project ownership
     const [project] = await db
       .select({ id: projects.id, firebaseJsonPath: projects.firebaseJsonPath })
       .from(projects)
@@ -102,18 +129,15 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
 
     if (!project) return { error: 'Project not found' }
     if (!project.firebaseJsonPath) {
-      return {
-        error:
-          'No Firebase credentials uploaded for this project. Go to Projects → upload your Firebase Service Account JSON.',
-      }
+      return { error: 'No Firebase credentials uploaded for this project.' }
     }
 
-    // Direct call — no self-referential fetch
     const result = await sendNotificationCore(
       session.userId,
       parsed.data.projectId,
       parsed.data.title,
-      parsed.data.body
+      parsed.data.body,
+      parsed.data.target,
     )
 
     if (!result.success) return { error: result.error ?? 'Failed to send notification' }

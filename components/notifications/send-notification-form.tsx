@@ -11,13 +11,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { sendNotification } from '@/lib/actions/notifications'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
-import type { Project } from '@/types'
+import type { Project, Topic } from '@/types'
 
 interface SendNotificationFormProps {
   projects: Project[]
+  topics?:  Topic[]
 }
 
-export function SendNotificationForm({ projects }: SendNotificationFormProps) {
+const PLATFORM_TARGETS = [
+  { value: 'all',          label: '📢 All devices' },
+  { value: 'android',      label: '🤖 Android only' },
+  { value: 'ios',          label: '🍎 iOS only' },
+  { value: 'flutter',      label: '💙 Flutter only' },
+  { value: 'react-native', label: '⚛️ React Native only' },
+]
+
+export function SendNotificationForm({ projects, topics = [] }: SendNotificationFormProps) {
   const router = useRouter()
 
   const [state, action, isPending] = useActionState(
@@ -34,7 +43,7 @@ export function SendNotificationForm({ projects }: SendNotificationFormProps) {
       toast.success(
         count > 0
           ? `Notification sent to ${count} device${count === 1 ? '' : 's'}`
-          : 'Notification sent (no devices registered)'
+          : 'Notification sent via topic'
       )
       router.refresh()
     }
@@ -52,6 +61,14 @@ export function SendNotificationForm({ projects }: SendNotificationFormProps) {
     )
   }
 
+  // Build target options including custom topics
+  const topicTargets = topics.map((t) => ({
+    value: `topic:${t.name}`,
+    label: `🏷️ Topic: ${t.name}`,
+  }))
+
+  const allTargets = [...PLATFORM_TARGETS, ...topicTargets]
+
   return (
     <Card>
       <CardHeader>
@@ -60,43 +77,44 @@ export function SendNotificationForm({ projects }: SendNotificationFormProps) {
           Send notification
         </CardTitle>
         <CardDescription>
-          Send a push notification to all registered devices in a project.
+          Send to all devices, a specific platform, or a custom topic.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form action={action} className="space-y-4">
+          {/* Project */}
           <div className="space-y-1.5">
             <Label htmlFor="projectId">Project</Label>
             <Select id="projectId" name="projectId" required placeholder="Select a project">
               {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </Select>
           </div>
 
+          {/* Target */}
           <div className="space-y-1.5">
-            <Label htmlFor="title">Title</Label>
-            <Input
-              id="title"
-              name="title"
-              placeholder="Notification title"
-              required
-              maxLength={100}
-            />
+            <Label htmlFor="target">Send to</Label>
+            <Select id="target" name="target" defaultValue="all">
+              {allTargets.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </Select>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Platform targets use FCM Topics — instant delivery to millions of devices.
+            </p>
           </div>
 
+          {/* Title */}
+          <div className="space-y-1.5">
+            <Label htmlFor="title">Title</Label>
+            <Input id="title" name="title" placeholder="Notification title" required maxLength={100} />
+          </div>
+
+          {/* Body */}
           <div className="space-y-1.5">
             <Label htmlFor="body">Message</Label>
-            <Textarea
-              id="body"
-              name="body"
-              placeholder="Notification message body"
-              required
-              maxLength={500}
-              rows={3}
-            />
+            <Textarea id="body" name="body" placeholder="Notification message body" required maxLength={500} rows={3} />
           </div>
 
           {state?.error && (
@@ -107,15 +125,9 @@ export function SendNotificationForm({ projects }: SendNotificationFormProps) {
 
           <Button type="submit" disabled={isPending} className="w-full sm:w-auto">
             {isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Sending…
-              </>
+              <><Loader2 className="h-4 w-4 animate-spin" />Sending…</>
             ) : (
-              <>
-                <Send className="h-4 w-4" />
-                Send to all devices
-              </>
+              <><Send className="h-4 w-4" />Send notification</>
             )}
           </Button>
         </form>

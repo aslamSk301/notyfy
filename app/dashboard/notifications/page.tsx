@@ -1,5 +1,5 @@
 import { getProjects } from '@/lib/actions/projects'
-import { getAllNotifications } from '@/lib/actions/notifications'
+import { getAllNotifications, getProjectTopics } from '@/lib/actions/notifications'
 import { SendNotificationForm } from '@/components/notifications/send-notification-form'
 import { NotificationTable } from '@/components/notifications/notification-table'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -14,6 +14,12 @@ export default async function NotificationsPage() {
     getAllNotifications(),
   ])
 
+  // Fetch topics for the first project (or all projects combined)
+  const allTopics = projects.length > 0
+    ? (await Promise.all(projects.map((p) => getProjectTopics(p.id))))
+        .flatMap((r) => r.topics)
+    : []
+
   return (
     <div className="space-y-6">
       <div>
@@ -24,7 +30,7 @@ export default async function NotificationsPage() {
       </div>
 
       {/* Send form */}
-      <SendNotificationForm projects={projects} />
+      <SendNotificationForm projects={projects} topics={allTopics} />
 
       {/* History */}
       <Card>
