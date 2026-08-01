@@ -16,7 +16,7 @@ export default async function TopicsPage() {
       <div>
         <h2 className="text-2xl font-bold text-[var(--foreground)]">Topics</h2>
         <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-          Create topics — users subscribe via the mobile SDK and receive targeted notifications.
+          Create topics — assign devices, then send targeted notifications with a single FCM call.
         </p>
       </div>
 
@@ -24,29 +24,27 @@ export default async function TopicsPage() {
       <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 space-y-2">
         <p className="text-sm font-medium text-[var(--foreground)] flex items-center gap-2">
           <Tags className="h-4 w-4 text-[var(--primary)]" />
-          How Dynamic Topics Work
+          How Topics Work
         </p>
         <ol className="space-y-1.5 text-xs text-[var(--muted-foreground)] list-decimal list-inside">
-          <li>Create a topic here (e.g. <code className="bg-[var(--muted)] px-1 rounded">cricket</code>, <code className="bg-[var(--muted)] px-1 rounded">breaking_news</code>)</li>
-          <li>Your mobile app calls <code className="bg-[var(--muted)] px-1 rounded">GET /api/topics?appId=&apiKey=</code> to fetch all topics</li>
-          <li>Show users a settings screen with topic toggles</li>
-          <li>On toggle → SDK calls subscribe/unsubscribe API</li>
-          <li>Send from dashboard using <strong>Topic</strong> selector — only subscribers receive it</li>
+          <li>Create a topic (e.g. <code className="bg-[var(--muted)] px-1 rounded">cricket</code>)</li>
+          <li>Click <strong>Assign All</strong> — all project devices get subscribed to the topic via FCM</li>
+          <li>Or app auto-subscribes on open: <code className="bg-[var(--muted)] px-1 rounded">NotifyMVP.subscribeToTopic('cricket')</code></li>
+          <li>Dashboard → Send to <strong>topic:cricket</strong> → 1 FCM call → all subscribers receive it instantly</li>
         </ol>
-        <div className="mt-3 rounded-md bg-[var(--muted)] p-3">
-          <p className="text-xs font-medium text-[var(--foreground)] mb-1">Flutter SDK usage:</p>
-          <pre className="text-xs text-[var(--primary)] overflow-x-auto"><code>{`// Fetch topics from backend
-final topics = await NotifyMVP.fetchTopics();
-
-// User toggles on
-await NotifyMVP.subscribeToTopic('cricket');
-
-// User toggles off
-await NotifyMVP.unsubscribeFromTopic('cricket');`}</code></pre>
+        <div className="mt-2 rounded bg-[var(--muted)] p-2 text-xs text-[var(--muted-foreground)]">
+          ⚡ <strong>All devices</strong> and <strong>Platform</strong> targets use FCM topics automatically —
+          devices auto-subscribe on app open. No DB token loop needed.
         </div>
       </div>
 
-      <TopicsManager projects={projects} topics={topics as Parameters<typeof TopicsManager>[0]['topics']} />
+      <TopicsManager
+        projects={projects}
+        topics={(topics ?? []) as Array<{
+          id: string; projectId: string; name: string; description: string | null;
+          isActive: boolean; createdAt: string; projectName: string; deviceCount: number
+        }>}
+      />
     </div>
   )
 }

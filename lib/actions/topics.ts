@@ -1,10 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
-import { projects, topics } from '@/lib/db/schema'
+import { projects, topics, devices, deviceTopics } from '@/lib/db/schema'
 import { requireSession } from '@/lib/auth/session'
 import { generateSecureToken } from '@/lib/utils'
 
@@ -15,33 +15,8 @@ const createSchema = z.object({
   description: z.string().max(200).optional(),
 })
 
-/** Get all topics for a project */
-export async function getTopicsForProject(projectId: string) {
-  try {
-    const session = await requireSession()
-    const db = await getDb()
+// ── Read ──────────────────────────────────────────────────────────────────────
 
-    const [project] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
-      .limit(1)
-
-    if (!project) return { topics: [], error: 'Project not found' }
-
-    const rows = await db
-      .select()
-      .from(topics)
-      .where(eq(topics.projectId, projectId))
-      .orderBy(topics.name)
-
-    return { topics: rows }
-  } catch (e) {
-    return { topics: [], error: (e as Error).message }
-  }
-}
-
-/** Get all topics across all user projects */
 export async function getAllTopics() {
   try {
     const session = await requireSession()
@@ -57,26 +32,74 @@ export async function getAllTopics() {
     const projectMap = Object.fromEntries(userProjects.map((p) => [p.id, p.name]))
     const projectIds = userProjects.map((p) => p.id)
 
+    // Get topics with device counts
     const rows = await db
       .select()
       .from(topics)
       .orderBy(topics.name)
 
-    const filtered = rows
-      .filter((t) => projectIds.includes(t.projectId))
-      .map((t) => ({ ...t, projectName: projectMap[t.projectId] ?? '—' }))
+    const filtered = rows.filter((t) => projectIds.includes(t.projectId))
 
-    return { topics: filtered }
+    // Get device counts per topic
+    const topicIds = filtered.map((t) => t.id)
+    let deviceCounts: Record<string, number> = {}
+
+    if (topicIds.length > 0) {
+      const counts = await db
+        .select({
+          topicId: deviceTopics.topicId,
+          count:   sql<number>`count(*)`,
+        })
+        .from(deviceTopics)
+        .where(inArray(deviceTopics.topicId, topicIds))
+        .groupBy(deviceTopics.topicId)
+
+      deviceCounts = Object.fromEntries(counts.map((c) => [c.topicId, Number(c.count)]))
+    }
+
+    const enriched = filtered.map((t) => ({
+      ...t,
+      projectName:  projectMap[t.projectId] ?? '—',
+      deviceCount:  deviceCounts[t.id] ?? 0,
+    }))
+
+    return { topics: enriched }
   } catch (e) {
     return { topics: [], error: (e as Error).message }
   }
 }
 
-/** Create a new topic */
+export async function getProjectTopics(projectId: string) {
+  try {
+    const session = await requireSession()
+    const db = await getDb()
+
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
+      .limit(1)
+
+    if (!project) return { topics: [] }
+
+    const rows = await db
+      .select()
+      .from(topics)
+      .where(eq(topics.projectId, projectId))
+      .orderBy(topics.name)
+
+    return { topics: rows }
+  } catch (e) {
+    return { topics: [], error: (e as Error).message }
+  }
+}
+
+// ── Create ────────────────────────────────────────────────────────────────────
+
 export async function createTopic(_prev: unknown, formData: FormData) {
   try {
     const session = await requireSession()
-    const parsed = createSchema.safeParse({
+    const parsed  = createSchema.safeParse({
       projectId:   formData.get('projectId'),
       name:        formData.get('name'),
       description: formData.get('description') || undefined,
@@ -119,11 +142,79 @@ export async function createTopic(_prev: unknown, formData: FormData) {
   }
 }
 
-/** Delete a topic */
+// ── Assign all project devices to a topic ─────────────────────────────────────
+
+export async function assignAllDevicesToTopic(topicId: string) {
+  try {
+    const session = await requireSession()
+    const db      = await getDb()
+
+    // Verify topic ownership
+    const [topic] = await db
+      .select({ id: topics.id, projectId: topics.projectId, name: topics.name })
+      .from(topics)
+      .where(eq(topics.id, topicId))
+      .limit(1)
+
+    if (!topic) return { error: 'Topic not found' }
+
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, topic.projectId), eq(projects.userId, session.userId)))
+      .limit(1)
+
+    if (!project) return { error: 'Not authorized' }
+
+    // Get all project devices
+    const allDevices = await db
+      .select({ id: devices.id })
+      .from(devices)
+      .where(eq(devices.projectId, project.id))
+
+    if (allDevices.length === 0) return { error: 'No devices registered for this project' }
+
+    // Get already assigned device IDs
+    const alreadyAssigned = await db
+      .select({ deviceId: deviceTopics.deviceId })
+      .from(deviceTopics)
+      .where(eq(deviceTopics.topicId, topicId))
+
+    const assignedSet = new Set(alreadyAssigned.map((d) => d.deviceId))
+    const newDevices  = allDevices.filter((d) => !assignedSet.has(d.id))
+
+    // Insert new assignments
+    let assigned = 0
+    for (const device of newDevices) {
+      await db.insert(deviceTopics).values({
+        id:         generateSecureToken(8),
+        deviceId:   device.id,
+        topicId:    topicId,
+        assignedBy: 'admin',
+      })
+      assigned++
+    }
+
+    revalidatePath('/dashboard/topics')
+    return {
+      success: true,
+      assigned,
+      total:   allDevices.length,
+      message: assigned > 0
+        ? `${assigned} device(s) assigned to "${topic.name}"`
+        : `All ${allDevices.length} devices already in "${topic.name}"`,
+    }
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+
 export async function deleteTopic(topicId: string) {
   try {
     const session = await requireSession()
-    const db = await getDb()
+    const db      = await getDb()
 
     const [topic] = await db
       .select({ projectId: topics.projectId })

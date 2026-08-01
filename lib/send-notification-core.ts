@@ -9,7 +9,7 @@
 
 import { eq, inArray } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
-import { projects, devices, notifications } from '@/lib/db/schema'
+import { projects, devices, notifications, topics, deviceTopics } from '@/lib/db/schema'
 import { downloadFromR2 } from '@/lib/r2/client'
 import {
   sendMulticastNotification,
@@ -102,32 +102,44 @@ export async function sendNotificationCore(
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
       }
     } else if (target.startsWith('topic:')) {
-      // Custom topic — Flutter subscribes directly via Firebase SDK
-      // Topic name is exactly as user subscribed (no suffix needed)
+      // DB-based topic send — admin assigned devices via dashboard
+      // Fetch tokens from device_topics junction table
       const topicName = target.replace('topic:', '')
 
-      const result = await sendToTopic(credentials, topicName, title, body)
-      successCount = result.success ? 1 : 0
-      failureCount = result.success ? 0 : 1
-      finalStatus  = result.success ? 'sent' : 'failed'
-    } else {
-      // 'all' | 'android' | 'ios' | 'flutter' | 'react-native'
-      // Use direct token send — reliable without requiring topic subscriptions
-      const deviceRows = await db
-        .select({ fcmToken: devices.fcmToken, platform: devices.platform })
-        .from(devices)
-        .where(eq(devices.projectId, projectId))
+      // Find the topic record
+      const [topicRow] = await db
+        .select({ id: topics.id })
+        .from(topics)
+        .where(eq(topics.name, topicName))
+        .limit(1)
 
-      let filteredTokens = deviceRows
-        .map((d) => ({ token: d.fcmToken, platform: d.platform }))
-        .filter((d) => d.token)
-
-      // Filter by platform if not 'all'
-      if (target !== 'all') {
-        filteredTokens = filteredTokens.filter((d) => d.platform === target)
+      if (!topicRow) {
+        return { success: false, error: `Topic "${topicName}" not found` }
       }
 
-      const tokens = filteredTokens.map((d) => d.token)
+      // Get all devices assigned to this topic
+      const assignedDevices = await db
+        .select({ deviceId: deviceTopics.deviceId })
+        .from(deviceTopics)
+        .where(eq(deviceTopics.topicId, topicRow.id))
+
+      if (assignedDevices.length === 0) {
+        // No devices assigned — update record and return
+        await db.update(notifications)
+          .set({ status: 'sent', sentAt: new Date().toISOString(), recipientCount: 0 })
+          .where(eq(notifications.id, notificationId))
+        return { success: true, notificationId, recipientCount: 0, failureCount: 0, status: 'sent' }
+      }
+
+      const assignedDeviceIds = assignedDevices.map((d) => d.deviceId)
+
+      // Get FCM tokens for those devices
+      const deviceRows = await db
+        .select({ fcmToken: devices.fcmToken })
+        .from(devices)
+        .where(inArray(devices.id, assignedDeviceIds))
+
+      const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
 
       const result = await sendMulticastNotification(credentials, tokens, title, body)
       successCount = result.successCount
@@ -136,6 +148,22 @@ export async function sendNotificationCore(
 
       if (result.deadTokens.length > 0) {
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
+      }
+    } else {
+      // 'all' | 'android' | 'ios' | 'flutter' | 'react-native'
+      // Use FCM topic — 1 API call, no DB token loop
+      // Devices auto-subscribe to these topics on app open via SDK
+      const topicName = target === 'all'
+        ? `all_${project.appId}`
+        : `${target}_${project.appId}`
+
+      const result = await sendToTopic(credentials, topicName, title, body)
+      successCount = result.success ? 1 : 0
+      failureCount = result.success ? 0 : 1
+      finalStatus  = result.success ? 'sent' : 'failed'
+
+      if (!result.success) {
+        console.error(`[Send] FCM topic send failed: ${result.error}`)
       }
     }
   } catch (err) {

@@ -75,7 +75,25 @@ export const topics = sqliteTable('topics', {
   projectIdIdx:       index('topics_project_id_idx').on(t.projectId),
 }))
 
-// ── Notifications ─────────────────────────────────────────────────────────────
+// ── Device Topics ─────────────────────────────────────────────────────────────
+// Junction table — tracks which devices are assigned to which topics
+// Admin assigns devices; device auto-joins on next app open
+export const deviceTopics = sqliteTable('device_topics', {
+  id:        text('id').primaryKey(),
+  deviceId:  text('device_id').notNull()
+               .references(() => devices.id, { onDelete: 'cascade' }),
+  topicId:   text('topic_id').notNull()
+               .references(() => topics.id, { onDelete: 'cascade' }),
+  assignedAt: text('assigned_at').notNull().default(sql`(datetime('now'))`),
+  assignedBy: text('assigned_by').notNull().default('admin'), // 'admin' | 'user'
+}, (t) => ({
+  deviceTopicUnique: uniqueIndex('device_topics_unique').on(t.deviceId, t.topicId),
+  deviceIdx:         index('device_topics_device_idx').on(t.deviceId),
+  topicIdx:          index('device_topics_topic_idx').on(t.topicId),
+}))
+
+export type DeviceTopic    = typeof deviceTopics.$inferSelect
+export type NewDeviceTopic = typeof deviceTopics.$inferInsert
 export const notifications = sqliteTable('notifications', {
   id:             text('id').primaryKey(),
   projectId:      text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
