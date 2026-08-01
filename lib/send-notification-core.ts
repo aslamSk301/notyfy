@@ -102,9 +102,9 @@ export async function sendNotificationCore(
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
       }
     } else if (target.startsWith('topic:')) {
-      // Custom topic only — send via FCM topic
-      const customName = target.replace('topic:', '')
-      const topicName  = `${customName}_${project.appId}`
+      // Custom topic — Flutter subscribes directly via Firebase SDK
+      // Topic name is exactly as user subscribed (no suffix needed)
+      const topicName = target.replace('topic:', '')
 
       const result = await sendToTopic(credentials, topicName, title, body)
       successCount = result.success ? 1 : 0
