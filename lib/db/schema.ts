@@ -63,12 +63,13 @@ export const devices = sqliteTable('devices', {
 }))
 
 // ── Topics ────────────────────────────────────────────────────────────────────
-// Tracks custom topics created per project for the dashboard
 export const topics = sqliteTable('topics', {
-  id:        text('id').primaryKey(),
-  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
-  name:      text('name').notNull(),   // e.g. "sports", "breaking_news"
-  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  id:          text('id').primaryKey(),
+  projectId:   text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  name:        text('name').notNull(),
+  description: text('description'),              // shown to users in the app
+  isActive:    integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  createdAt:   text('created_at').notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   projectTopicUnique: uniqueIndex('topics_project_name_unique').on(t.projectId, t.name),
   projectIdIdx:       index('topics_project_id_idx').on(t.projectId),
