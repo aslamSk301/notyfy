@@ -101,7 +101,8 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
               ))}
             </Select>
             <p className="text-xs text-[var(--muted-foreground)]">
-              Platform targets use FCM Topics — instant delivery to millions of devices.
+              All devices and platform targets send via direct token delivery.
+              Custom topics use FCM topic messaging.
             </p>
           </div>
 
