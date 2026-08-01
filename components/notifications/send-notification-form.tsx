@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import { Loader2, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,10 +24,12 @@ const PLATFORM_TARGETS = [
   { value: 'ios',          label: '🍎 iOS only' },
   { value: 'flutter',      label: '💙 Flutter only' },
   { value: 'react-native', label: '⚛️ React Native only' },
+  { value: 'user',         label: '👤 Specific user (External ID)' },
 ]
 
 export function SendNotificationForm({ projects, topics = [] }: SendNotificationFormProps) {
   const router = useRouter()
+  const [target, setTarget] = useState('all')
 
   const [state, action, isPending] = useActionState(
     async (prev: unknown, formData: FormData) => {
@@ -43,7 +45,7 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
       toast.success(
         count > 0
           ? `Notification sent to ${count} device${count === 1 ? '' : 's'}`
-          : 'Notification sent via topic'
+          : 'Notification sent'
       )
       router.refresh()
     }
@@ -61,7 +63,6 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
     )
   }
 
-  // Build target options including custom topics
   const topicTargets = topics.map((t) => ({
     value: `topic:${t.name}`,
     label: `🏷️ Topic: ${t.name}`,
@@ -77,7 +78,7 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
           Send notification
         </CardTitle>
         <CardDescription>
-          Send to all devices, a specific platform, or a custom topic.
+          Send to all devices, a platform, a specific user, or a custom topic.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -95,16 +96,34 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
           {/* Target */}
           <div className="space-y-1.5">
             <Label htmlFor="target">Send to</Label>
-            <Select id="target" name="target" defaultValue="all">
+            <Select
+              id="target"
+              name="target"
+              defaultValue="all"
+              onChange={(e) => setTarget(e.target.value)}
+            >
               {allTargets.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </Select>
-            <p className="text-xs text-[var(--muted-foreground)]">
-              All devices and platform targets send via direct token delivery.
-              Custom topics use FCM topic messaging.
-            </p>
           </div>
+
+          {/* External User ID — shown only when target = 'user' */}
+          {target === 'user' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="externalUserId">External User ID</Label>
+              <Input
+                id="externalUserId"
+                name="externalUserId"
+                placeholder="e.g. user_9847 or ahmed@gmail.com"
+                required
+              />
+              <p className="text-xs text-[var(--muted-foreground)]">
+                The ID you assigned via <code className="bg-[var(--muted)] px-1 rounded">NotifyMVP.setExternalUserId()</code> in your app.
+                Sends to ALL devices registered with this user.
+              </p>
+            </div>
+          )}
 
           {/* Title */}
           <div className="space-y-1.5">
