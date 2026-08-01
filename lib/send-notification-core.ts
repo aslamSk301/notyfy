@@ -151,19 +151,31 @@ export async function sendNotificationCore(
       }
     } else {
       // 'all' | 'android' | 'ios' | 'flutter' | 'react-native'
-      // Use FCM topic — 1 API call, no DB token loop
-      // Devices auto-subscribe to these topics on app open via SDK
-      const topicName = target === 'all'
-        ? `all_${project.appId}`
-        : `${target}_${project.appId}`
+      // Direct token send — guaranteed delivery regardless of topic subscription status
+      // FCM topic would require all devices to have the new SDK installed first
+      const deviceRows = await db
+        .select({ fcmToken: devices.fcmToken, platform: devices.platform })
+        .from(devices)
+        .where(eq(devices.projectId, projectId))
 
-      const result = await sendToTopic(credentials, topicName, title, body)
-      successCount = result.success ? 1 : 0
-      failureCount = result.success ? 0 : 1
-      finalStatus  = result.success ? 'sent' : 'failed'
+      let filteredTokens = deviceRows
+        .map((d) => ({ token: d.fcmToken, platform: d.platform }))
+        .filter((d) => d.token)
 
-      if (!result.success) {
-        console.error(`[Send] FCM topic send failed: ${result.error}`)
+      // Filter by platform if not 'all'
+      if (target !== 'all') {
+        filteredTokens = filteredTokens.filter((d) => d.platform === target)
+      }
+
+      const tokens = filteredTokens.map((d) => d.token)
+
+      const result = await sendMulticastNotification(credentials, tokens, title, body)
+      successCount = result.successCount
+      failureCount = result.failureCount
+      finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
+
+      if (result.deadTokens.length > 0) {
+        await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
       }
     }
   } catch (err) {
