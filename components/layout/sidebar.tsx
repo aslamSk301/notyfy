@@ -9,6 +9,7 @@ import {
   Settings,
   Zap,
   Tags,
+  Smartphone,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +17,7 @@ const navItems = [
   { href: '/dashboard',               label: 'Dashboard',     icon: LayoutDashboard },
   { href: '/dashboard/projects',      label: 'Projects',      icon: FolderOpen },
   { href: '/dashboard/notifications', label: 'Notifications', icon: Bell },
+  { href: '/dashboard/devices',       label: 'Devices',       icon: Smartphone },
   { href: '/dashboard/topics',        label: 'Topics',        icon: Tags },
   { href: '/dashboard/settings',      label: 'Settings',      icon: Settings },
 ]
