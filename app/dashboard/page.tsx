@@ -8,35 +8,40 @@ import { FolderOpen, Bell, Smartphone, Activity } from 'lucide-react'
 import Link from 'next/link'
 
 async function getDashboardStats(userId: string) {
-  const db = await getDb()
+  try {
+    const db = await getDb()
 
-  // Step 1 — user's projects
-  const userProjects = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.userId, userId))
+    // Step 1 — user's projects
+    const userProjects = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.userId, userId))
 
-  const projectIds = userProjects.map((p) => p.id)
+    const projectIds = userProjects.map((p) => p.id)
 
-  if (projectIds.length === 0) {
+    if (projectIds.length === 0) {
+      return { projectCount: 0, notificationCount: 0, deviceCount: 0, sentCount: 0 }
+    }
+
+    // Step 2 — counts via project IDs
+    const [allNotifications, allDevices] = await Promise.all([
+      db.select({ status: notifications.status })
+        .from(notifications)
+        .where(inArray(notifications.projectId, projectIds)),
+      db.select({ id: devices.id })
+        .from(devices)
+        .where(inArray(devices.projectId, projectIds)),
+    ])
+
+    return {
+      projectCount:      userProjects.length,
+      notificationCount: allNotifications.length,
+      sentCount:         allNotifications.filter((n) => n.status === 'sent').length,
+      deviceCount:       allDevices.length,
+    }
+  } catch (err) {
+    console.error('[Dashboard] Failed to load stats:', err)
     return { projectCount: 0, notificationCount: 0, deviceCount: 0, sentCount: 0 }
-  }
-
-  // Step 2 — counts via project IDs
-  const [allNotifications, allDevices] = await Promise.all([
-    db.select({ status: notifications.status })
-      .from(notifications)
-      .where(inArray(notifications.projectId, projectIds)),
-    db.select({ id: devices.id })
-      .from(devices)
-      .where(inArray(devices.projectId, projectIds)),
-  ])
-
-  return {
-    projectCount:      userProjects.length,
-    notificationCount: allNotifications.length,
-    sentCount:         allNotifications.filter((n) => n.status === 'sent').length,
-    deviceCount:       allDevices.length,
   }
 }
 
