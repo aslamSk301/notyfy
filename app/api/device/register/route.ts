@@ -35,104 +35,118 @@ const schema = z.object({
 })
 
 export async function POST(request: NextRequest) {
-  let body: unknown
-  try { body = await request.json() }
-  catch { return NextResponse.json({ success: false, error: 'Invalid JSON body' }, { status: 400 }) }
+  try {
+    let body: unknown
+    try { body = await request.json() }
+    catch { return NextResponse.json({ success: false, error: 'Invalid JSON body' }, { status: 400 }) }
 
-  const parsed = schema.safeParse(body)
-  if (!parsed.success) {
+    const parsed = schema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: parsed.error.issues[0].message },
+        { status: 400 }
+      )
+    }
+
+    const {
+      appId, apiKey, fcmToken, platform, deviceId,
+      appVersion, deviceModel, deviceOs, language,
+      timezone, externalUserId, sdkVersion,
+    } = parsed.data
+
+    const db = await getDb()
+
+    // ── Validate appId + apiKey ───────────────────────────────────────────────
+    const [project] = await db
+      .select({ id: projects.id, appId: projects.appId, firebaseJsonPath: projects.firebaseJsonPath })
+      .from(projects)
+      .where(and(eq(projects.appId, appId), eq(projects.apiKey, apiKey)))
+      .limit(1)
+
+    if (!project) {
+      return NextResponse.json({ success: false, error: 'Invalid appId or apiKey' }, { status: 401 })
+    }
+
+    const now = new Date().toISOString()
+
+    // ── Upsert device ─────────────────────────────────────────────────────────
+    const [existing] = await db
+      .select({ id: devices.id, fcmToken: devices.fcmToken })
+      .from(devices)
+      .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
+      .limit(1)
+
+    const oldToken = existing?.fcmToken
+    const activeToken = fcmToken || oldToken || `pending_${deviceId}`
+
+    if (existing) {
+      await db
+        .update(devices)
+        .set({
+          fcmToken:           activeToken,
+          appVersion:         appVersion     ?? undefined,
+          deviceModel:        deviceModel    ?? undefined,
+          deviceOs:           deviceOs       ?? undefined,
+          language:           language       ?? undefined,
+          timezone:           timezone       ?? undefined,
+          externalUserId:     externalUserId ?? undefined,
+          sdkVersion:         sdkVersion     ?? undefined,
+          subscriptionStatus: 'subscribed',
+          status:             'active',
+          lastActive:         now,
+          updatedAt:          now,
+        })
+        .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
+    } else {
+      await db.insert(devices).values({
+        id:                     generateSecureToken(16),
+        projectId:              project.id,
+        deviceId,
+        fcmToken:               activeToken,
+        platform,
+        appVersion:             appVersion     ?? null,
+        deviceModel:            deviceModel    ?? null,
+        deviceOs:               deviceOs       ?? null,
+        language:               language       ?? null,
+        timezone:               timezone       ?? null,
+        externalUserId:         externalUserId ?? null,
+        sdkVersion:             sdkVersion     ?? null,
+        subscriptionStatus:     'subscribed',
+        notificationPermission: 'granted',
+        status:                 'active',
+        lastActive:             now,
+        createdAt:              now,
+        updatedAt:              now,
+      })
+    }
+
+    // ── Auto-subscribe to topics (fire and forget) ────────────────────────────
+    // Only if firebase credentials & valid FCM token exist (not pending_)
+    if (project.firebaseJsonPath && activeToken && !activeToken.startsWith('pending_')) {
+      autoSubscribeTopics({
+        projectId:    project.id,
+        appId:        project.appId,
+        fcmToken:     activeToken,
+        oldToken:     oldToken && oldToken !== activeToken ? oldToken : undefined,
+        platform,
+        firebasePath: project.firebaseJsonPath,
+      }).catch((err) => {
+        console.error('[Topics] Auto-subscribe failed:', err)
+      })
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Device registered successfully',
+      data: { deviceId, platform },
+    })
+  } catch (err: any) {
+    console.error('[Device Register Error]', err)
     return NextResponse.json(
-      { success: false, error: parsed.error.issues[0].message },
-      { status: 400 }
+      { success: false, error: err?.message || 'Internal Server Error' },
+      { status: 500 }
     )
   }
-
-  const {
-    appId, apiKey, fcmToken, platform, deviceId,
-    appVersion, deviceModel, deviceOs, language,
-    timezone, externalUserId, sdkVersion,
-  } = parsed.data
-
-  const db = await getDb()
-
-  // ── Validate appId + apiKey ───────────────────────────────────────────────
-  const [project] = await db
-    .select({ id: projects.id, appId: projects.appId, firebaseJsonPath: projects.firebaseJsonPath })
-    .from(projects)
-    .where(and(eq(projects.appId, appId), eq(projects.apiKey, apiKey)))
-    .limit(1)
-
-  if (!project) {
-    return NextResponse.json({ success: false, error: 'Invalid appId or apiKey' }, { status: 401 })
-  }
-
-  const now = new Date().toISOString()
-
-  // ── Upsert device ─────────────────────────────────────────────────────────
-  const [existing] = await db
-    .select({ id: devices.id, fcmToken: devices.fcmToken })
-    .from(devices)
-    .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
-    .limit(1)
-
-  const oldToken = existing?.fcmToken
-  const activeToken = fcmToken || oldToken || ''
-
-  if (existing) {
-    await db
-      .update(devices)
-      .set({
-        ...(fcmToken ? { fcmToken } : {}),
-        appVersion:         appVersion     ?? undefined,
-        deviceModel:        deviceModel    ?? undefined,
-        deviceOs:           deviceOs       ?? undefined,
-        language:           language       ?? undefined,
-        timezone:           timezone       ?? undefined,
-        externalUserId:     externalUserId ?? undefined,
-        sdkVersion:         sdkVersion     ?? undefined,
-        subscriptionStatus: 'subscribed',
-        lastActive:         now,
-      })
-      .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
-  } else {
-    await db.insert(devices).values({
-      id:                 generateSecureToken(16),
-      projectId:          project.id,
-      deviceId,
-      fcmToken:           activeToken,
-      platform,
-      appVersion:         appVersion     ?? null,
-      deviceModel:        deviceModel    ?? null,
-      deviceOs:           deviceOs       ?? null,
-      language:           language       ?? null,
-      timezone:           timezone       ?? null,
-      externalUserId:     externalUserId ?? null,
-      sdkVersion:         sdkVersion     ?? null,
-      subscriptionStatus: 'subscribed',
-      lastActive:         now,
-    })
-  }
-
-  // ── Auto-subscribe to topics (fire and forget) ────────────────────────────
-  // Only if firebase credentials & non-empty token exist
-  if (project.firebaseJsonPath && activeToken) {
-    autoSubscribeTopics({
-      projectId:    project.id,
-      appId:        project.appId,
-      fcmToken:     activeToken,
-      oldToken:     oldToken !== activeToken ? oldToken : undefined,
-      platform,
-      firebasePath: project.firebaseJsonPath,
-    }).catch((err) => {
-      console.error('[Topics] Auto-subscribe failed:', err)
-    })
-  }
-
-  return NextResponse.json({
-    success: true,
-    message: 'Device registered successfully',
-    data: { deviceId, platform },
-  })
 }
 
 // ── Internal — auto-subscribe device to standard topics ──────────────────────
