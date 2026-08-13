@@ -21,7 +21,7 @@ import type { FirebaseCredentials } from '@/lib/firebase/admin'
 const schema = z.object({
   appId:          z.string().min(1, 'appId is required'),
   apiKey:         z.string().min(1, 'apiKey is required'),
-  fcmToken:       z.string().min(1, 'fcmToken is required'),
+  fcmToken:       z.string().optional().default(''),
   platform:       z.enum(['android', 'ios', 'flutter', 'react-native']),
   deviceId:       z.string().min(1, 'deviceId is required'),
   // Enhanced fields (all optional — for OneSignal parity)
@@ -76,12 +76,13 @@ export async function POST(request: NextRequest) {
     .limit(1)
 
   const oldToken = existing?.fcmToken
+  const activeToken = fcmToken || oldToken || ''
 
   if (existing) {
     await db
       .update(devices)
       .set({
-        fcmToken,
+        ...(fcmToken ? { fcmToken } : {}),
         appVersion:         appVersion     ?? undefined,
         deviceModel:        deviceModel    ?? undefined,
         deviceOs:           deviceOs       ?? undefined,
@@ -98,7 +99,7 @@ export async function POST(request: NextRequest) {
       id:                 generateSecureToken(16),
       projectId:          project.id,
       deviceId,
-      fcmToken,
+      fcmToken:           activeToken,
       platform,
       appVersion:         appVersion     ?? null,
       deviceModel:        deviceModel    ?? null,
@@ -113,13 +114,13 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Auto-subscribe to topics (fire and forget) ────────────────────────────
-  // Only if firebase credentials are configured
-  if (project.firebaseJsonPath) {
+  // Only if firebase credentials & non-empty token exist
+  if (project.firebaseJsonPath && activeToken) {
     autoSubscribeTopics({
       projectId:    project.id,
       appId:        project.appId,
-      fcmToken,
-      oldToken:     oldToken !== fcmToken ? oldToken : undefined,
+      fcmToken:     activeToken,
+      oldToken:     oldToken !== activeToken ? oldToken : undefined,
       platform,
       firebasePath: project.firebaseJsonPath,
     }).catch((err) => {
