@@ -33,13 +33,13 @@ export async function getAllNotifications() {
     const projectIds = userProjects.map((p) => p.id)
     const projectMap = Object.fromEntries(userProjects.map((p) => [p.id, p.name]))
 
-    // Step 2 — fetch notifications
+    // Step 2 — fetch notifications (latest 100, paginated on client)
     const rows = await db
       .select()
       .from(notifications)
       .where(inArray(notifications.projectId, projectIds))
       .orderBy(desc(notifications.createdAt))
-      .limit(200)
+      .limit(100)
 
     const enriched = rows.map((n) => ({
       ...n,

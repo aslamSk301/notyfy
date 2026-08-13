@@ -1,6 +1,6 @@
 'use server'
 
-import { eq, inArray, desc } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects, devices, deviceTopics, topics } from '@/lib/db/schema'
 import { requireSession } from '@/lib/auth/session'
@@ -46,7 +46,7 @@ export async function getAllDevices() {
       .select()
       .from(devices)
       .where(inArray(devices.projectId, projectIds))
-      .orderBy(desc(devices.lastActive))
+      .orderBy(sql`coalesce(${devices.lastActive}, ${devices.createdAt}) desc`)
 
     if (deviceRows.length === 0) return { devices: [] }
 
