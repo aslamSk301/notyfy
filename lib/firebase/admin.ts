@@ -112,6 +112,11 @@ async function sendOne(
       priority: 'high',
       notification: {
         sound: 'default',
+        channel_id: 'notifymvp_heads_up_v4',
+        notification_priority: 'PRIORITY_MAX',
+        default_sound: true,
+        default_vibrate_timings: true,
+        visibility: 'PUBLIC',
         ...(imageUrl && { image: imageUrl }),
         ...(targetUrl && { click_action: targetUrl }),
       },
@@ -131,8 +136,16 @@ async function sendOne(
       },
     },
     apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+      },
       payload: {
         aps: {
+          alert: {
+            title,
+            body,
+          },
           sound: 'default',
           badge: 1,
           'mutable-content': 1,
