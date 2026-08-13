@@ -56,7 +56,7 @@ export async function createProject(_prev: unknown, formData: FormData) {
   try {
     const session = await requireSession()
     const parsed = createSchema.safeParse({ name: formData.get('name') })
-    if (!parsed.success) return { error: parsed.error.errors[0].message }
+    if (!parsed.success) return { error: parsed.error.issues[0].message }
 
     const db = await getDb()
     const projectId = generateSecureToken(16)
@@ -101,7 +101,7 @@ export async function updateProject(_prev: unknown, formData: FormData) {
       id:   formData.get('id'),
       name: formData.get('name'),
     })
-    if (!parsed.success) return { error: parsed.error.errors[0].message }
+    if (!parsed.success) return { error: parsed.error.issues[0].message }
 
     const db = await getDb()
     await db

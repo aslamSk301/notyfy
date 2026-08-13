@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { register } from '@/lib/actions/auth'
+import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 
 export default function RegisterPage() {
   const [state, action, isPending] = useActionState(register, null)
@@ -26,9 +27,18 @@ export default function RegisterPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle>Create account</CardTitle>
-            <CardDescription>Sign up to start sending push notifications</CardDescription>
+            <CardDescription>Sign up with Google or enter your details</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            <GoogleSignInButton />
+
+            <div className="relative flex items-center justify-center">
+              <div className="w-full border-t border-[var(--border)]" />
+              <span className="bg-[var(--card)] px-2 text-xs uppercase text-[var(--muted-foreground)]">
+                Or
+              </span>
+            </div>
+
             <form action={action} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
@@ -80,3 +90,4 @@ export default function RegisterPage() {
     </div>
   )
 }
+

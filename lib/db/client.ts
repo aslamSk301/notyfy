@@ -11,12 +11,15 @@ import * as schema from './schema'
 export type Db = ReturnType<typeof drizzle<typeof schema>>
 
 export async function getDb(): Promise<Db> {
-  // ── Cloudflare Workers runtime ────────────────────────────────────────────
-  if (isCloudflareRuntime()) {
+  try {
     const { getCloudflareContext } = await import('@opennextjs/cloudflare')
     const { env } = await getCloudflareContext({ async: true })
     const cfEnv = env as unknown as CloudflareEnv
-    return drizzle(cfEnv.DB, { schema })
+    if (cfEnv && cfEnv.DB) {
+      return drizzle(cfEnv.DB, { schema })
+    }
+  } catch {
+    // Fall back to local D1 HTTP API shim below
   }
 
   // ── Local next dev — D1 HTTP API shim ─────────────────────────────────────
@@ -34,15 +37,6 @@ export async function getDb(): Promise<Db> {
   }
 
   return drizzle(makeD1Shim(accountId, databaseId, apiToken), { schema })
-}
-
-function isCloudflareRuntime(): boolean {
-  return (
-    typeof globalThis !== 'undefined' &&
-    typeof (globalThis as Record<string, unknown>).caches !== 'undefined' &&
-    typeof (globalThis as Record<string, unknown>).Request !== 'undefined' &&
-    typeof process === 'undefined'
-  )
 }
 
 /**

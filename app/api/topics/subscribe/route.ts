@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = schema.safeParse(body)
   if (!parsed.success) {
-    return NextResponse.json({ success: false, error: parsed.error.errors[0].message }, { status: 400 })
+    return NextResponse.json({ success: false, error: parsed.error.issues[0].message }, { status: 400 })
   }
 
   const { appId, apiKey, fcmToken, topic } = parsed.data

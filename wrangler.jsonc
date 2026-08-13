@@ -19,7 +19,7 @@
   ],
 
   "vars": {
-    "NEXT_PUBLIC_APP_URL": "https://notifymvp.sknawab2999.workers.dev"
+    "NEXT_PUBLIC_APP_URL": "https://notify.earnslash.com"
   },
 
   "main": ".open-next/worker.js",

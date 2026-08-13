@@ -27,7 +27,7 @@ export async function login(_prev: unknown, formData: FormData) {
   }
 
   const parsed = loginSchema.safeParse(raw)
-  if (!parsed.success) return { error: parsed.error.errors[0].message }
+  if (!parsed.success) return { error: parsed.error.issues[0].message }
 
   const db = await getDb()
 
@@ -58,7 +58,7 @@ export async function register(_prev: unknown, formData: FormData) {
   }
 
   const parsed = registerSchema.safeParse(raw)
-  if (!parsed.success) return { error: parsed.error.errors[0].message }
+  if (!parsed.success) return { error: parsed.error.issues[0].message }
 
   const db = await getDb()
 
