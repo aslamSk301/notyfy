@@ -36,7 +36,7 @@ async function getDashboardStats(userId: string) {
     return {
       projectCount:      userProjects.length,
       notificationCount: allNotifications.length,
-      sentCount:         allNotifications.filter((n) => n.status === 'sent').length,
+      sentCount:         allNotifications.filter((n) => n.status === 'sent' || n.status === 'completed').length,
       deviceCount:       allDevices.length,
     }
   } catch (err) {

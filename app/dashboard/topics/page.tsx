@@ -40,10 +40,8 @@ export default async function TopicsPage() {
 
       <TopicsManager
         projects={projects}
-        topics={(topics ?? []) as Array<{
-          id: string; projectId: string; name: string; description: string | null;
-          isActive: boolean; createdAt: string; projectName: string; deviceCount: number
-        }>}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        topics={topics as any}
       />
     </div>
   )

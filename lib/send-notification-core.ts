@@ -75,14 +75,22 @@ export async function sendNotificationCore(
   // ── 3. Create notification record ─────────────────────────────────────────
   const notificationId = generateSecureToken(16)
   await db.insert(notifications).values({
-    id: notificationId, projectId, title, body,
-    target, status: 'pending', recipientCount: 0,
+    id: notificationId,
+    projectId,
+    name: title,
+    title,
+    body,
+    target,
+    targetType: target.startsWith('topic:') ? 'topic' : target === 'user' ? 'device' : 'topic',
+    targetValue: target.replace('topic:', ''),
+    status: 'pending',
+    recipientCount: 0,
   })
 
   // ── 4. Send ───────────────────────────────────────────────────────────────
   let successCount = 0
   let failureCount = 0
-  let finalStatus: 'sent' | 'failed' = 'failed'
+  let finalStatus: 'completed' | 'failed' = 'failed'
 
   try {
     if (target === 'tokens') {
@@ -96,7 +104,7 @@ export async function sendNotificationCore(
       const result = await sendMulticastNotification(credentials, tokens, title, body)
       successCount = result.successCount
       failureCount = result.failureCount
-      finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
+      finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
 
       if (result.deadTokens.length > 0) {
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
@@ -126,7 +134,7 @@ export async function sendNotificationCore(
       if (assignedDevices.length === 0) {
         // No devices assigned — update record and return
         await db.update(notifications)
-          .set({ status: 'sent', sentAt: new Date().toISOString(), recipientCount: 0 })
+          .set({ status: 'completed', sentAt: new Date().toISOString(), recipientCount: 0 })
           .where(eq(notifications.id, notificationId))
         return { success: true, notificationId, recipientCount: 0, failureCount: 0, status: 'sent' }
       }
@@ -144,7 +152,7 @@ export async function sendNotificationCore(
       const result = await sendMulticastNotification(credentials, tokens, title, body)
       successCount = result.successCount
       failureCount = result.failureCount
-      finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
+      finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
 
       if (result.deadTokens.length > 0) {
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
@@ -172,7 +180,7 @@ export async function sendNotificationCore(
       const result = await sendMulticastNotification(credentials, tokens, title, body)
       successCount = result.successCount
       failureCount = result.failureCount
-      finalStatus  = successCount > 0 || tokens.length === 0 ? 'sent' : 'failed'
+      finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
 
       if (result.deadTokens.length > 0) {
         await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
@@ -192,5 +200,5 @@ export async function sendNotificationCore(
     .set({ status: finalStatus, sentAt: new Date().toISOString(), recipientCount: successCount })
     .where(eq(notifications.id, notificationId))
 
-  return { success: true, notificationId, recipientCount: successCount, failureCount, status: finalStatus }
+  return { success: true, notificationId, recipientCount: successCount, failureCount, status: finalStatus as unknown as 'sent' | 'failed' }
 }
