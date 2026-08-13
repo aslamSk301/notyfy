@@ -28,6 +28,12 @@ export interface SendResult {
   error?:          string
 }
 
+export interface SendNotificationOptions {
+  url?: string
+  imageUrl?: string
+  data?: Record<string, string>
+}
+
 /**
  * @param target  'all' | 'android' | 'ios' | 'flutter' | 'react-native'
  *                | 'topic:{name}' | 'tokens'
@@ -37,7 +43,8 @@ export async function sendNotificationCore(
   projectId: string,
   title:     string,
   body:      string,
-  target:    string = 'all'
+  target:    string = 'all',
+  options?:  SendNotificationOptions
 ): Promise<SendResult> {
   const db = await getDb()
 
@@ -80,6 +87,8 @@ export async function sendNotificationCore(
     name: title,
     title,
     body,
+    url: options?.url ?? null,
+    imageUrl: options?.imageUrl ?? null,
     target,
     targetType: target.startsWith('topic:') ? 'topic' : target === 'user' ? 'device' : 'topic',
     targetValue: target.replace('topic:', ''),
@@ -92,6 +101,12 @@ export async function sendNotificationCore(
   let failureCount = 0
   let finalStatus: 'completed' | 'failed' = 'failed'
 
+  const fcmSendOptions = {
+    url: options?.url,
+    imageUrl: options?.imageUrl,
+    data: options?.data,
+  }
+
   try {
     if (target === 'tokens') {
       // Explicit token-based send
@@ -101,7 +116,7 @@ export async function sendNotificationCore(
         .where(eq(devices.projectId, projectId))
       const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
 
-      const result = await sendMulticastNotification(credentials, tokens, title, body)
+      const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
       successCount = result.successCount
       failureCount = result.failureCount
       finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
@@ -149,7 +164,7 @@ export async function sendNotificationCore(
 
       const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
 
-      const result = await sendMulticastNotification(credentials, tokens, title, body)
+      const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
       successCount = result.successCount
       failureCount = result.failureCount
       finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
@@ -160,7 +175,6 @@ export async function sendNotificationCore(
     } else {
       // 'all' | 'android' | 'ios' | 'flutter' | 'react-native'
       // Direct token send — guaranteed delivery regardless of topic subscription status
-      // FCM topic would require all devices to have the new SDK installed first
       const deviceRows = await db
         .select({ fcmToken: devices.fcmToken, platform: devices.platform })
         .from(devices)
@@ -177,7 +191,7 @@ export async function sendNotificationCore(
 
       const tokens = filteredTokens.map((d) => d.token)
 
-      const result = await sendMulticastNotification(credentials, tokens, title, body)
+      const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
       successCount = result.successCount
       failureCount = result.failureCount
       finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'

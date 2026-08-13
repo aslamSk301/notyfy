@@ -15,7 +15,7 @@ import {
 import { classifyFcmError } from '@/lib/firebase/error-handler'
 import { querySegmentDeviceTokens } from '@/lib/services/segment-service'
 import { generateSecureToken } from '@/lib/utils'
-import type { CampaignQueueMessage } from './producer'
+import type { CampaignQueueMessage } from './types'
 
 export async function processCampaignQueueJob(job: CampaignQueueMessage) {
   const db  = await getDb()

@@ -13,21 +13,27 @@ import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import type { Project, Topic } from '@/types'
 
+interface SegmentOption {
+  id: string
+  name: string
+}
+
 interface SendNotificationFormProps {
   projects: Project[]
   topics?:  Topic[]
+  segments?: SegmentOption[]
 }
 
 const PLATFORM_TARGETS = [
-  { value: 'all',          label: '📢 All devices' },
-  { value: 'android',      label: '🤖 Android only' },
-  { value: 'ios',          label: '🍎 iOS only' },
-  { value: 'flutter',      label: '💙 Flutter only' },
-  { value: 'react-native', label: '⚛️ React Native only' },
-  { value: 'user',         label: '👤 Specific user (External ID)' },
+  { value: 'all',          label: '📢 All Subscriptions (All Devices)' },
+  { value: 'android',      label: '🤖 Android Segment' },
+  { value: 'ios',          label: '🍎 iOS Segment' },
+  { value: 'flutter',      label: '💙 Flutter Segment' },
+  { value: 'react-native', label: '⚛️ React Native Segment' },
+  { value: 'user',         label: '👤 Specific User (External ID)' },
 ]
 
-export function SendNotificationForm({ projects, topics = [] }: SendNotificationFormProps) {
+export function SendNotificationForm({ projects, topics = [], segments = [] }: SendNotificationFormProps) {
   const router = useRouter()
   const [target, setTarget] = useState('all')
 
@@ -63,22 +69,27 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
     )
   }
 
+  const segmentTargets = segments.map((s) => ({
+    value: `segment:${s.id}`,
+    label: `🎯 Segment: ${s.name}`,
+  }))
+
   const topicTargets = topics.map((t) => ({
     value: `topic:${t.name}`,
     label: `🏷️ Topic: ${t.name}`,
   }))
 
-  const allTargets = [...PLATFORM_TARGETS, ...topicTargets]
+  const allTargets = [...PLATFORM_TARGETS, ...segmentTargets, ...topicTargets]
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Send className="h-4 w-4 text-[var(--primary)]" />
-          Send notification
+          Send Notification
         </CardTitle>
         <CardDescription>
-          Send to all devices, a platform, a specific user, or a custom topic.
+          Send to all audience subscriptions, targeted platform, specific user, or dynamic segment.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -135,6 +146,31 @@ export function SendNotificationForm({ projects, topics = [] }: SendNotification
           <div className="space-y-1.5">
             <Label htmlFor="body">Message</Label>
             <Textarea id="body" name="body" placeholder="Notification message body" required maxLength={500} rows={3} />
+          </div>
+
+          {/* Launch URL / Action Link */}
+          <div className="space-y-1.5">
+            <Label htmlFor="url">Action Link / Launch URL (Optional)</Label>
+            <Input
+              id="url"
+              name="url"
+              type="url"
+              placeholder="e.g. https://earnslash.com/stories/123"
+            />
+            <p className="text-xs text-[var(--muted-foreground)]">
+              When users click the notification, their browser or app will open this URL.
+            </p>
+          </div>
+
+          {/* Image URL */}
+          <div className="space-y-1.5">
+            <Label htmlFor="imageUrl">Image URL (Optional)</Label>
+            <Input
+              id="imageUrl"
+              name="imageUrl"
+              type="url"
+              placeholder="e.g. https://example.com/banner.jpg"
+            />
           </div>
 
           {state?.error && (

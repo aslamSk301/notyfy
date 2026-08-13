@@ -8,8 +8,9 @@ import {
   Bell,
   Settings,
   Zap,
-  Tags,
+  Users,
   Smartphone,
+  Key,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -18,7 +19,8 @@ const navItems = [
   { href: '/dashboard/projects',      label: 'Projects',      icon: FolderOpen },
   { href: '/dashboard/notifications', label: 'Notifications', icon: Bell },
   { href: '/dashboard/devices',       label: 'Devices',       icon: Smartphone },
-  { href: '/dashboard/topics',        label: 'Topics',        icon: Tags },
+  { href: '/dashboard/segments',      label: 'Segments',      icon: Users },
+  { href: '/dashboard/api-keys',      label: 'API Keys & Docs', icon: Key },
   { href: '/dashboard/settings',      label: 'Settings',      icon: Settings },
 ]
 

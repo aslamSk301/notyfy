@@ -74,6 +74,12 @@ const DEAD_TOKEN_STATUSES = new Set([
   'NOT_FOUND',
 ])
 
+export interface FcmOptionsInput {
+  url?: string
+  imageUrl?: string
+  data?: Record<string, string>
+}
+
 // ── Send to single token ──────────────────────────────────────────────────────
 async function sendOne(
   accessToken: string,
@@ -81,22 +87,65 @@ async function sendOne(
   fcmToken:    string,
   title:       string,
   body:        string,
-  data?:       Record<string, string>
+  options?:    FcmOptionsInput
 ): Promise<{ success: boolean; isDeadToken: boolean }> {
-  const url = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`
+  const urlEndpoint = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`
 
-  const res = await fetch(url, {
+  const targetUrl = options?.url || options?.data?.url
+  const imageUrl  = options?.imageUrl || options?.data?.imageUrl
+
+  const combinedData: Record<string, string> = {
+    ...(options?.data || {}),
+    ...(targetUrl ? { url: targetUrl, click_action: targetUrl } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+  }
+
+  const messagePayload: Record<string, any> = {
+    token: fcmToken,
+    notification: {
+      title,
+      body,
+      ...(imageUrl && { image: imageUrl }),
+    },
+    ...(Object.keys(combinedData).length > 0 && { data: combinedData }),
+    android: {
+      priority: 'high',
+      notification: {
+        sound: 'default',
+        ...(imageUrl && { image: imageUrl }),
+        ...(targetUrl && { click_action: targetUrl }),
+      },
+    },
+    webpush: {
+      headers: {
+        ...(imageUrl && { image: imageUrl }),
+      },
+      fcm_options: {
+        ...(targetUrl && { link: targetUrl }),
+      },
+      notification: {
+        title,
+        body,
+        ...(imageUrl && { image: imageUrl }),
+        ...(targetUrl && { click_action: targetUrl }),
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default',
+          badge: 1,
+          'mutable-content': 1,
+        },
+      },
+      ...(imageUrl && { fcm_options: { image: imageUrl } }),
+    },
+  }
+
+  const res = await fetch(urlEndpoint, {
     method:  'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: {
-        token: fcmToken,
-        notification: { title, body },
-        ...(data && { data }),
-        android: { priority: 'high', notification: { sound: 'default', click_action: 'FLUTTER_NOTIFICATION_CLICK' } },
-        apns:    { payload: { aps: { sound: 'default', badge: 1 } } },
-      },
-    }),
+    body: JSON.stringify({ message: messagePayload }),
   })
 
   if (res.ok) return { success: true, isDeadToken: false }
@@ -117,12 +166,17 @@ export async function sendMulticastNotification(
   tokens:      string[],
   title:       string,
   body:        string,
-  data?:       Record<string, string>
+  options?:    FcmOptionsInput | Record<string, string>
 ): Promise<FcmSendResult> {
   if (tokens.length === 0) return { successCount: 0, failureCount: 0, deadTokens: [] }
 
   const accessToken = await getAccessToken(credentials)
   const projectId   = credentials.project_id
+
+  const fcmOpts: FcmOptionsInput =
+    options && ('url' in options || 'imageUrl' in options || 'data' in options)
+      ? (options as FcmOptionsInput)
+      : { data: options as Record<string, string> }
 
   let successCount = 0
   let failureCount = 0
@@ -132,7 +186,7 @@ export async function sendMulticastNotification(
   for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
     const batch   = tokens.slice(i, i + BATCH_SIZE)
     const results = await Promise.allSettled(
-      batch.map((token) => sendOne(accessToken, projectId, token, title, body, data))
+      batch.map((token) => sendOne(accessToken, projectId, token, title, body, fcmOpts))
     )
     for (let j = 0; j < results.length; j++) {
       const r = results[j]

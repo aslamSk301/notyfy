@@ -3,13 +3,10 @@
  * Enqueues notification campaign execution tasks for asynchronous processing.
  */
 
-export interface CampaignQueueMessage {
-  campaignId:  string
-  projectId:   string
-  targetType:  'topic' | 'device' | 'segment'
-  targetValue: string
-  attempt:     number
-}
+import { processCampaignQueueJob } from './consumer'
+import type { CampaignQueueMessage } from './types'
+
+export type { CampaignQueueMessage }
 
 export async function enqueueCampaignJob(
   env: { CAMPAIGN_QUEUE?: Queue<CampaignQueueMessage> },
@@ -21,7 +18,6 @@ export async function enqueueCampaignJob(
   }
 
   // Fallback: synchronous inline execution if queue binding is not present (e.g. local dev fallback)
-  const { processCampaignQueueJob } = await import('./consumer')
   await processCampaignQueueJob(message)
   return { queued: false, inline: true }
 }

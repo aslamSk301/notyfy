@@ -13,7 +13,9 @@ const sendSchema = z.object({
   title:          z.string().min(1, 'Title is required').max(100),
   body:           z.string().min(1, 'Body is required').max(500),
   target:         z.string().min(1).default('all'),
-  externalUserId: z.string().optional(), // only for target = 'user'
+  url:            z.string().url('Action Link must be a valid URL').optional().or(z.literal('')),
+  imageUrl:       z.string().url('Image URL must be a valid URL').optional().or(z.literal('')),
+  externalUserId: z.string().optional(),
 })
 
 /** Fetch all notifications across all user projects */
@@ -113,6 +115,8 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
     title:          formData.get('title') as string,
     body:           formData.get('body') as string,
     target:         (formData.get('target') as string) || 'all',
+    url:            (formData.get('url') as string) || undefined,
+    imageUrl:       (formData.get('imageUrl') as string) || undefined,
     externalUserId: (formData.get('externalUserId') as string) || undefined,
   }
 
@@ -129,8 +133,8 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
       .where(eq(projects.id, parsed.data.projectId))
       .limit(1)
 
-    if (!project)                    return { error: 'Project not found' }
-    if (!project.firebaseJsonPath)   return { error: 'No Firebase credentials uploaded for this project.' }
+    if (!project)                  return { error: 'Project not found' }
+    if (!project.firebaseJsonPath) return { error: 'No Firebase credentials uploaded for this project.' }
 
     // Handle "send to specific user" target
     if (parsed.data.target === 'user') {
@@ -138,20 +142,6 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
         return { error: 'External User ID is required for "Send to User" target' }
       }
 
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://notifymvp.sknawab2999.workers.dev'
-      // Call the dedicated user endpoint
-      const res = await fetch(`${baseUrl}/api/notifications/send-to-user`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: `notifymvp_session=${session.userId}` },
-        body:    JSON.stringify({
-          projectId:      parsed.data.projectId,
-          externalUserId: parsed.data.externalUserId,
-          title:          parsed.data.title,
-          body:           parsed.data.body,
-        }),
-      })
-
-      // Use direct DB approach instead of HTTP call
       const { eq: eqOp, and: andOp } = await import('drizzle-orm')
       const { devices: devicesTable } = await import('@/lib/db/schema')
       const { downloadFromR2 } = await import('@/lib/r2/client')
@@ -181,7 +171,11 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
         json as Parameters<typeof sendMulticastNotification>[0],
         tokens,
         parsed.data.title,
-        parsed.data.body
+        parsed.data.body,
+        {
+          url: parsed.data.url,
+          imageUrl: parsed.data.imageUrl,
+        }
       )
 
       revalidatePath('/dashboard/notifications')
@@ -194,6 +188,10 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
       parsed.data.title,
       parsed.data.body,
       parsed.data.target,
+      {
+        url: parsed.data.url,
+        imageUrl: parsed.data.imageUrl,
+      }
     )
 
     if (!result.success) return { error: result.error ?? 'Failed to send notification' }
