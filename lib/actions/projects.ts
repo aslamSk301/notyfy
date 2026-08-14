@@ -73,20 +73,33 @@ export async function createProject(_prev: unknown, formData: FormData) {
       firebaseJsonPath = uploadResult.key ?? null
     }
 
+    const appId = generateAppId()
+    const apiKey = generateSecureToken(32)
+
     const [created] = await db
       .insert(projects)
       .values({
         id:               projectId,
         userId:           session.userId,
         name:             parsed.data.name,
-        appId:            generateAppId(),
-        apiKey:           generateSecureToken(32),
+        appId,
+        apiKey,
         firebaseJsonPath,
       })
       .returning()
 
+    const resultProject = created ?? {
+      id: projectId,
+      userId: session.userId,
+      name: parsed.data.name,
+      appId,
+      apiKey,
+      firebaseJsonPath,
+      createdAt: new Date().toISOString(),
+    }
+
     revalidatePath('/dashboard/projects')
-    return { success: true, project: created }
+    return { success: true, project: resultProject }
   } catch (e) {
     return { error: (e as Error).message }
   }

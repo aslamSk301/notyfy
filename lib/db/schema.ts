@@ -70,7 +70,7 @@ export const baVerification = sqliteTable('ba_verification', {
 // ── Projects ──────────────────────────────────────────────────────────────────
 export const projects = sqliteTable('projects', {
   id:               text('id').primaryKey(),
-  userId:           text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId:           text('user_id').notNull(),
   name:             text('name').notNull(),
   appId:            text('app_id').notNull().unique(),
   apiKey:           text('api_key').notNull(),
