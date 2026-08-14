@@ -1,22 +1,49 @@
 'use client'
 
-import { useActionState, Suspense } from 'react'
+import { useState, Suspense } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Zap, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { login } from '@/lib/actions/auth'
+import { signIn } from '@/lib/auth/client'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 
 function LoginForm() {
-  const [state, action, isPending] = useActionState(login, null)
+  const router = useRouter()
   const searchParams = useSearchParams()
   const queryError = searchParams.get('error')
 
-  const errorMessage = state?.error || queryError
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [isPending, setIsPending] = useState(false)
+  const [error, setError] = useState<string | null>(queryError)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsPending(true)
+    setError(null)
+
+    await signIn.email({
+      email,
+      password,
+      fetchOptions: {
+        onResponse: (ctx) => {
+          if (ctx.response.status === 200) {
+            router.push('/dashboard')
+          }
+        },
+        onError: (ctx) => {
+          setError(ctx.error.message || 'An error occurred')
+          setIsPending(false)
+        },
+      }
+    })
+  }
+
+  const errorMessage = error
 
   return (
     <div className="w-full max-w-sm space-y-6">
@@ -43,7 +70,7 @@ function LoginForm() {
             </span>
           </div>
 
-          <form action={action} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -52,6 +79,8 @@ function LoginForm() {
                 type="email"
                 placeholder="you@example.com"
                 autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>
@@ -64,6 +93,8 @@ function LoginForm() {
                 type="password"
                 placeholder="••••••••"
                 autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
@@ -101,4 +132,3 @@ export default function LoginPage() {
     </div>
   )
 }
-

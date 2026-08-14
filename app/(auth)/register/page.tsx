@@ -1,17 +1,45 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Zap, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { register } from '@/lib/actions/auth'
+import { signUp } from '@/lib/auth/client'
 import { GoogleSignInButton } from '@/components/auth/google-sign-in-button'
 
 export default function RegisterPage() {
-  const [state, action, isPending] = useActionState(register, null)
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [isPending, setIsPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsPending(true)
+    setError(null)
+
+    await signUp.email({
+      email,
+      password,
+      name: email.split('@')[0], // better-auth requires a name
+      fetchOptions: {
+        onResponse: (ctx) => {
+          if (ctx.response.status === 200) {
+            router.push('/dashboard')
+          }
+        },
+        onError: (ctx) => {
+          setError(ctx.error.message || 'An error occurred')
+          setIsPending(false)
+        },
+      }
+    })
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--background)] p-4">
@@ -39,7 +67,7 @@ export default function RegisterPage() {
               </span>
             </div>
 
-            <form action={action} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -48,6 +76,8 @@ export default function RegisterPage() {
                   type="email"
                   placeholder="you@example.com"
                   autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   required
                 />
               </div>
@@ -60,15 +90,17 @@ export default function RegisterPage() {
                   type="password"
                   placeholder="••••••••"
                   autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={8}
                 />
                 <p className="text-xs text-[var(--muted-foreground)]">Minimum 8 characters</p>
               </div>
 
-              {state?.error && (
+              {error && (
                 <p className="rounded-md bg-[var(--destructive)]/10 px-3 py-2 text-sm text-[var(--destructive)]">
-                  {state.error}
+                  {error}
                 </p>
               )}
 
@@ -90,4 +122,3 @@ export default function RegisterPage() {
     </div>
   )
 }
-

@@ -20,6 +20,53 @@ export const users = sqliteTable('users', {
   createdAt:    text('created_at').notNull().default(sql`(datetime('now'))`),
 })
 
+// ── Better Auth Tables ────────────────────────────────────────────────────────
+export const baUser = sqliteTable('ba_user', {
+  id:            text('id').primaryKey(),
+  name:          text('name').notNull(),
+  email:         text('email').notNull().unique(),
+  emailVerified: integer('emailVerified', { mode: 'boolean' }).notNull().default(false),
+  image:         text('image'),
+  createdAt:     integer('createdAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+  updatedAt:     integer('updatedAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+})
+
+export const baSession = sqliteTable('ba_session', {
+  id:         text('id').primaryKey(),
+  expiresAt:  integer('expiresAt', { mode: 'timestamp_ms' }).notNull(),
+  token:      text('token').notNull().unique(),
+  createdAt:  integer('createdAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+  updatedAt:  integer('updatedAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+  ipAddress:  text('ipAddress'),
+  userAgent:  text('userAgent'),
+  userId:     text('userId').notNull(),
+})
+
+export const baAccount = sqliteTable('ba_account', {
+  id:                    text('id').primaryKey(),
+  accountId:             text('accountId').notNull(),
+  providerId:            text('providerId').notNull(),
+  userId:                text('userId').notNull(),
+  accessToken:           text('accessToken'),
+  refreshToken:          text('refreshToken'),
+  idToken:               text('idToken'),
+  accessTokenExpiresAt:  integer('accessTokenExpiresAt', { mode: 'timestamp_ms' }),
+  refreshTokenExpiresAt: integer('refreshTokenExpiresAt', { mode: 'timestamp_ms' }),
+  scope:                 text('scope'),
+  password:              text('password'),
+  createdAt:             integer('createdAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+  updatedAt:             integer('updatedAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+})
+
+export const baVerification = sqliteTable('ba_verification', {
+  id:         text('id').primaryKey(),
+  identifier: text('identifier').notNull(),
+  value:      text('value').notNull(),
+  expiresAt:  integer('expiresAt', { mode: 'timestamp_ms' }).notNull(),
+  createdAt:  integer('createdAt', { mode: 'timestamp_ms' }).default(sql`(datetime('now'))`),
+  updatedAt:  integer('updatedAt', { mode: 'timestamp_ms' }).default(sql`(datetime('now'))`),
+})
+
 // ── Projects ──────────────────────────────────────────────────────────────────
 export const projects = sqliteTable('projects', {
   id:               text('id').primaryKey(),

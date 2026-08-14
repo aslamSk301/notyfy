@@ -16,6 +16,9 @@
     "cf:secret": "wrangler secret put"
   },
   "dependencies": {
+    "@better-auth/core": "^1.6.27",
+    "@better-auth/drizzle-adapter": "^1.6.27",
+    "@better-auth/infra": "^0.3.7",
     "@hookform/resolvers": "^5.5.7",
     "@radix-ui/react-avatar": "^1.2.6",
     "@radix-ui/react-dialog": "^1.1.23",
@@ -25,6 +28,8 @@
     "@radix-ui/react-slot": "^1.3.3",
     "@radix-ui/react-toast": "^1.2.23",
     "bcryptjs": "^3.0.3",
+    "better-auth": "^1.6.27",
+    "better-call": "^1.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",

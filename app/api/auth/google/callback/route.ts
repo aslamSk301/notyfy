@@ -3,7 +3,6 @@ import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { users } from '@/lib/db/schema'
 import { createSessionToken } from '@/lib/auth/jwt'
-import { setSessionCookie } from '@/lib/auth/session'
 import { generateSecureToken } from '@/lib/utils'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
@@ -92,7 +91,6 @@ export async function GET(req: NextRequest) {
 
     // Create session cookie
     const sessionToken = await createSessionToken({ userId: user.id, email: user.email })
-    await setSessionCookie(sessionToken)
 
     const res = NextResponse.redirect(`${appUrl}/dashboard`)
     res.cookies.set('notifymvp_session', sessionToken, {

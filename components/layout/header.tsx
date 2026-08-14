@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { logout } from '@/lib/actions/auth'
+import { signOut } from '@/lib/auth/client'
 import { toast } from 'sonner'
 
 interface HeaderProps {
@@ -23,11 +23,16 @@ export function Header({ email }: HeaderProps) {
 
   async function handleLogout() {
     try {
-      await logout()
+      await signOut({
+        fetchOptions: {
+          onSuccess: () => {
+            router.push('/login')
+            router.refresh()
+          }
+        }
+      })
     } catch {
-      // logout() calls redirect() which throws — this is expected
-      router.push('/login')
-      router.refresh()
+      toast.error('Failed to sign out')
     }
   }
 
