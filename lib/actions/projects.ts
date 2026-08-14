@@ -1,10 +1,10 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
-import { projects } from '@/lib/db/schema'
+import { projects, users } from '@/lib/db/schema'
 import { requireSession } from '@/lib/auth/session'
 import { uploadToR2, deleteFromR2, buildFirebaseCredentialsKey } from '@/lib/r2/client'
 import { generateAppId, generateSecureToken } from '@/lib/utils'
@@ -60,6 +60,15 @@ export async function createProject(_prev: unknown, formData: FormData) {
 
     const db = await getDb()
     const projectId = generateSecureToken(16)
+
+    // Ensure user exists in users table to satisfy foreign keys on production D1
+    try {
+      await db.insert(users).values({
+        id: session.userId,
+        email: session.email,
+        passwordHash: 'better-auth',
+      }).onConflictDoNothing()
+    } catch {}
 
     // Handle optional Firebase JSON upload
     const firebaseFile = formData.get('firebaseJson') as File | null
