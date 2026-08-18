@@ -15,7 +15,7 @@ interface NotificationTableProps {
 }
 
 function StatusBadge({ status }: { status: Notification['status'] }) {
-  if (status === 'sent')   return <Badge variant="success">Sent</Badge>
+  if (status === 'sent' || status === 'completed') return <Badge variant="success">Sent</Badge>
   if (status === 'failed') return <Badge variant="error">Failed</Badge>
   return <Badge variant="secondary">Pending</Badge>
 }

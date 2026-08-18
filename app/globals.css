@@ -4,6 +4,9 @@
    CSS custom properties — light / dark design tokens
    ============================================================ */
 :root {
+  --font-geist-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
   --background: #0f0f11;
   --foreground: #f4f4f5;
 
