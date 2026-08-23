@@ -96,7 +96,7 @@ async function sendOne(
 
   const combinedData: Record<string, string> = {
     ...(options?.data || {}),
-    ...(targetUrl ? { url: targetUrl, click_action: targetUrl } : {}),
+    ...(targetUrl ? { url: targetUrl, link: targetUrl } : {}),
     ...(imageUrl ? { imageUrl } : {}),
   }
 
@@ -118,7 +118,6 @@ async function sendOne(
         default_vibrate_timings: true,
         visibility: 'PUBLIC',
         ...(imageUrl && { image: imageUrl }),
-        ...(targetUrl && { click_action: targetUrl }),
       },
     },
     webpush: {
@@ -132,7 +131,6 @@ async function sendOne(
         title,
         body,
         ...(imageUrl && { image: imageUrl }),
-        ...(targetUrl && { click_action: targetUrl }),
       },
     },
     apns: {
