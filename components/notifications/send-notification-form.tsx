@@ -25,17 +25,16 @@ interface SendNotificationFormProps {
 }
 
 const PLATFORM_TARGETS = [
-  { value: 'all',          label: '📢 All Subscriptions (All Devices)' },
-  { value: 'android',      label: '🤖 Android Segment' },
-  { value: 'ios',          label: '🍎 iOS Segment' },
-  { value: 'flutter',      label: '💙 Flutter Segment' },
-  { value: 'react-native', label: '⚛️ React Native Segment' },
-  { value: 'user',         label: '👤 Specific User (External ID)' },
+  { value: 'all',     label: 'All users' },
+  { value: 'android', label: 'Android' },
+  { value: 'ios',     label: 'iOS' },
+  { value: 'user',    label: 'Specific user (External ID)' },
 ]
 
 export function SendNotificationForm({ projects, topics = [], segments = [] }: SendNotificationFormProps) {
   const router = useRouter()
   const [target, setTarget] = useState('all')
+  const [formNonce, setFormNonce] = useState(0)
 
   const [state, action, isPending] = useActionState(
     async (prev: unknown, formData: FormData) => {
@@ -53,6 +52,8 @@ export function SendNotificationForm({ projects, topics = [], segments = [] }: S
           ? `Notification sent to ${count} device${count === 1 ? '' : 's'}`
           : 'Notification sent'
       )
+      setTarget('all')
+      setFormNonce((n) => n + 1)
       router.refresh()
     }
   }, [state, router])
@@ -76,7 +77,7 @@ export function SendNotificationForm({ projects, topics = [], segments = [] }: S
 
   const topicTargets = topics.map((t) => ({
     value: `topic:${t.name}`,
-    label: `🏷️ Topic: ${t.name}`,
+    label: t.description ? t.description : `Topic: ${t.name}`,
   }))
 
   const allTargets = [...PLATFORM_TARGETS, ...segmentTargets, ...topicTargets]
@@ -89,11 +90,11 @@ export function SendNotificationForm({ projects, topics = [], segments = [] }: S
           Send Notification
         </CardTitle>
         <CardDescription>
-          Send to all audience subscriptions, targeted platform, specific user, or dynamic segment.
+          Broadcasts go through FCM topics (all users, OS, country, app version) — not a database token scan.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form action={action} className="space-y-4">
+        <form key={formNonce} action={action} className="space-y-4">
           {/* Project */}
           <div className="space-y-1.5">
             <Label htmlFor="projectId">Project</Label>
@@ -104,13 +105,13 @@ export function SendNotificationForm({ projects, topics = [], segments = [] }: S
             </Select>
           </div>
 
-          {/* Target */}
+          {/* Target — controlled so it never desyncs from the ID field */}
           <div className="space-y-1.5">
             <Label htmlFor="target">Send to</Label>
             <Select
               id="target"
               name="target"
-              defaultValue="all"
+              value={target}
               onChange={(e) => setTarget(e.target.value)}
             >
               {allTargets.map((t) => (
@@ -119,19 +120,17 @@ export function SendNotificationForm({ projects, topics = [], segments = [] }: S
             </Select>
           </div>
 
-          {/* External User ID — shown only when target = 'user' */}
           {target === 'user' && (
             <div className="space-y-1.5">
               <Label htmlFor="externalUserId">External User ID</Label>
               <Input
                 id="externalUserId"
                 name="externalUserId"
-                placeholder="e.g. user_9847 or ahmed@gmail.com"
+                placeholder="Paste the ID copied from Devices"
                 required
               />
               <p className="text-xs text-[var(--muted-foreground)]">
-                The ID you assigned via <code className="bg-[var(--muted)] px-1 rounded">NotifyMVP.setExternalUserId()</code> in your app.
-                Sends to ALL devices registered with this user.
+                Paste the ID from the Devices page Copy button. Sends to every device registered with this user.
               </p>
             </div>
           )}

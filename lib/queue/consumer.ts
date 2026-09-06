@@ -15,6 +15,7 @@ import {
 import { classifyFcmError } from '@/lib/firebase/error-handler'
 import { querySegmentDeviceTokens } from '@/lib/services/segment-service'
 import { generateSecureToken } from '@/lib/utils'
+import { resolveAudienceTarget } from '@/lib/utils/topic-normalizer'
 import type { CampaignQueueMessage } from './types'
 
 export async function processCampaignQueueJob(job: CampaignQueueMessage) {
@@ -72,8 +73,10 @@ export async function processCampaignQueueJob(job: CampaignQueueMessage) {
 
   // ── 3A. TOPIC TARGET (Large Broadcast — O(1) D1 Load) ────────────────────
   if (campaign.targetType === 'topic') {
+    const resolved = resolveAudienceTarget(project.appId, campaign.targetValue)
+    const topicName = resolved.kind === 'topic' ? resolved.topic : campaign.targetValue
     const topicResult = await sendFcmTopicNotification(credentials, {
-      topic:       campaign.targetValue,
+      topic:       topicName,
       title:       campaign.title,
       body:        campaign.body,
       image:       campaign.image ?? undefined,
@@ -99,7 +102,7 @@ export async function processCampaignQueueJob(job: CampaignQueueMessage) {
       id:          generateSecureToken(16),
       campaignId:  campaign.id,
       deviceId:    null,
-      fcmToken:    `topic:${campaign.targetValue}`,
+      fcmToken:    `topic:${topicName}`,
       status:      topicResult.success ? 'sent' : 'failed',
       errorCode:   topicResult.errorCode ?? null,
       sentAt:      now,

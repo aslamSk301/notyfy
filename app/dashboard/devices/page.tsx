@@ -1,8 +1,9 @@
 import { getAllDevices } from '@/lib/actions/devices'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Badge } from '@/components/ui/badge'
+import { CopyButton } from '@/components/shared/copy-button'
 import { Smartphone, Wifi, WifiOff } from 'lucide-react'
-import { formatDate, maskApiKey } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 
 export const metadata = { title: 'Devices' }
 
@@ -73,9 +74,19 @@ export default async function DevicesPage() {
                         {device.deviceModel ?? '—'}
                       </p>
                       {device.externalUserId && (
-                        <p className="text-xs text-[var(--muted-foreground)]">
-                          User: {device.externalUserId}
-                        </p>
+                        <div className="mt-0.5 flex items-center gap-0.5">
+                          <p
+                            className="max-w-[180px] truncate font-mono text-xs text-[var(--muted-foreground)]"
+                            title={device.externalUserId}
+                          >
+                            {device.externalUserId}
+                          </p>
+                          <CopyButton
+                            value={device.externalUserId}
+                            label="Copy"
+                            className="h-6 px-1.5"
+                          />
+                        </div>
                       )}
                       <p className="text-xs text-[var(--muted-foreground)] font-mono">
                         {device.deviceId.slice(0, 16)}…

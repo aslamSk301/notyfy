@@ -1,13 +1,11 @@
 /**
- * Core notification send logic.
- * Supports sending to:
- *   - 'all'                     → all devices (via topic all_{appId})
- *   - 'android' | 'ios' etc     → platform topic
- *   - 'topic:{topicName}'       → custom topic
- *   - 'tokens'                  → individual token loop (fallback)
+ * Core notification send — OneSignal-style FCM topic fan-out.
+ *
+ * Broadcasts (all / OS / country / version / named topic) → one FCM topic call.
+ * Segments and explicit token lists still walk D1.
  */
 
-import { eq, inArray } from 'drizzle-orm'
+import { eq, and, inArray, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects, devices, notifications, topics, deviceTopics } from '@/lib/db/schema'
 import { downloadFromR2 } from '@/lib/r2/client'
@@ -18,6 +16,8 @@ import {
   type FirebaseCredentials,
 } from '@/lib/firebase/admin'
 import { generateSecureToken } from '@/lib/utils'
+import { resolveAudienceTarget } from '@/lib/utils/topic-normalizer'
+import { querySegmentDeviceTokens } from '@/lib/services/segment-service'
 
 export interface SendResult {
   success:         boolean
@@ -34,9 +34,32 @@ export interface SendNotificationOptions {
   data?: Record<string, string>
 }
 
+async function estimateTopicSubscribers(projectId: string, topicName: string): Promise<number> {
+  const db = await getDb()
+  const [topicRow] = await db
+    .select({ id: topics.id })
+    .from(topics)
+    .where(and(eq(topics.projectId, projectId), eq(topics.name, topicName)))
+    .limit(1)
+
+  if (!topicRow) {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(devices)
+      .where(and(eq(devices.projectId, projectId), eq(devices.status, 'active')))
+    return Number(row?.n ?? 0)
+  }
+
+  const [row] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(deviceTopics)
+    .where(eq(deviceTopics.topicId, topicRow.id))
+  return Number(row?.n ?? 0)
+}
+
 /**
- * @param target  'all' | 'android' | 'ios' | 'flutter' | 'react-native'
- *                | 'topic:{name}' | 'tokens'
+ * @param target  'all' | 'android' | 'ios' | 'version:2' | 'country:IN'
+ *                | 'topic:{name}' | 'segment:{id}' | 'tokens'
  */
 export async function sendNotificationCore(
   userId:    string,
@@ -48,7 +71,6 @@ export async function sendNotificationCore(
 ): Promise<SendResult> {
   const db = await getDb()
 
-  // ── 1. Verify project ownership ───────────────────────────────────────────
   const [project] = await db
     .select()
     .from(projects)
@@ -63,7 +85,6 @@ export async function sendNotificationCore(
     return { success: false, error: 'No Firebase credentials configured for this project' }
   }
 
-  // ── 2. Load Firebase credentials from R2 ─────────────────────────────────
   const fileContent = await downloadFromR2(project.firebaseJsonPath)
   if (!fileContent) {
     return { success: false, error: 'Failed to load Firebase credentials from storage' }
@@ -79,8 +100,17 @@ export async function sendNotificationCore(
     return { success: false, error: 'Firebase credentials file is not valid JSON' }
   }
 
-  // ── 3. Create notification record ─────────────────────────────────────────
+  const audience = resolveAudienceTarget(project.appId, target)
   const notificationId = generateSecureToken(16)
+  const targetType =
+    audience.kind === 'segment' ? 'segment' :
+    audience.kind === 'user' ? 'device' : 'topic'
+  const targetValue =
+    audience.kind === 'topic' ? audience.topic :
+    audience.kind === 'segment' ? audience.segmentId :
+    audience.kind === 'user' ? audience.userId :
+    target
+
   await db.insert(notifications).values({
     id: notificationId,
     projectId,
@@ -90,16 +120,11 @@ export async function sendNotificationCore(
     url: options?.url ?? null,
     imageUrl: options?.imageUrl ?? null,
     target,
-    targetType: target.startsWith('topic:') ? 'topic' : target === 'user' ? 'device' : 'topic',
-    targetValue: target.replace('topic:', ''),
+    targetType,
+    targetValue,
     status: 'pending',
     recipientCount: 0,
   })
-
-  // ── 4. Send ───────────────────────────────────────────────────────────────
-  let successCount = 0
-  let failureCount = 0
-  let finalStatus: 'completed' | 'failed' = 'failed'
 
   const fcmSendOptions = {
     url: options?.url,
@@ -107,98 +132,66 @@ export async function sendNotificationCore(
     data: options?.data,
   }
 
+  let successCount = 0
+  let failureCount = 0
+  let finalStatus: 'completed' | 'failed' = 'failed'
+
   try {
-    if (target === 'tokens') {
-      // Explicit token-based send
-      const deviceRows = await db
-        .select({ fcmToken: devices.fcmToken })
-        .from(devices)
-        .where(eq(devices.projectId, projectId))
-      const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
-
-      const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
-      successCount = result.successCount
-      failureCount = result.failureCount
-      finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
-
-      if (result.deadTokens.length > 0) {
-        await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
-      }
-    } else if (target.startsWith('topic:')) {
-      // DB-based topic send — admin assigned devices via dashboard
-      // Fetch tokens from device_topics junction table
-      const topicName = target.replace('topic:', '')
-
-      // Find the topic record
-      const [topicRow] = await db
-        .select({ id: topics.id })
-        .from(topics)
-        .where(eq(topics.name, topicName))
-        .limit(1)
-
-      if (!topicRow) {
-        return { success: false, error: `Topic "${topicName}" not found` }
-      }
-
-      // Get all devices assigned to this topic
-      const assignedDevices = await db
-        .select({ deviceId: deviceTopics.deviceId })
-        .from(deviceTopics)
-        .where(eq(deviceTopics.topicId, topicRow.id))
-
-      if (assignedDevices.length === 0) {
-        // No devices assigned — update record and return
+    if (audience.kind === 'topic') {
+      const result = await sendToTopic(
+        credentials,
+        audience.topic,
+        title,
+        body,
+        fcmSendOptions,
+      )
+      if (!result.success) {
         await db.update(notifications)
-          .set({ status: 'completed', sentAt: new Date().toISOString(), recipientCount: 0 })
+          .set({ status: 'failed', sentAt: new Date().toISOString() })
           .where(eq(notifications.id, notificationId))
-        return { success: true, notificationId, recipientCount: 0, failureCount: 0, status: 'sent' }
+        return { success: false, error: result.error || 'FCM topic send failed', notificationId }
       }
-
-      const assignedDeviceIds = assignedDevices.map((d) => d.deviceId)
-
-      // Get FCM tokens for those devices
+      successCount = await estimateTopicSubscribers(projectId, audience.topic)
+      finalStatus = 'completed'
+    } else if (audience.kind === 'segment') {
+      const targetDevices = await querySegmentDeviceTokens(projectId, audience.segmentId)
+      const tokens = targetDevices.map((d) => d.fcmToken).filter(Boolean)
+      const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
+      successCount = result.successCount
+      failureCount = result.failureCount
+      finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
+      if (result.deadTokens.length > 0) {
+        await db
+          .update(devices)
+          .set({ status: 'inactive', inactiveAt: new Date().toISOString() })
+          .where(inArray(devices.fcmToken, result.deadTokens))
+      }
+    } else if (audience.kind === 'user') {
+      if (!audience.userId) {
+        return { success: false, error: 'User id is required' }
+      }
       const deviceRows = await db
         .select({ fcmToken: devices.fcmToken })
         .from(devices)
-        .where(inArray(devices.id, assignedDeviceIds))
-
+        .where(and(
+          eq(devices.projectId, projectId),
+          eq(devices.externalUserId, audience.userId),
+        ))
       const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
-
       const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
       successCount = result.successCount
       failureCount = result.failureCount
       finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
-
-      if (result.deadTokens.length > 0) {
-        await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
-      }
     } else {
-      // 'all' | 'android' | 'ios' | 'flutter' | 'react-native'
-      // Direct token send — guaranteed delivery regardless of topic subscription status
       const deviceRows = await db
-        .select({ fcmToken: devices.fcmToken, platform: devices.platform })
+        .select({ fcmToken: devices.fcmToken })
         .from(devices)
         .where(eq(devices.projectId, projectId))
-
-      let filteredTokens = deviceRows
-        .map((d) => ({ token: d.fcmToken, platform: d.platform }))
-        .filter((d) => d.token)
-
-      // Filter by platform if not 'all'
-      if (target !== 'all') {
-        filteredTokens = filteredTokens.filter((d) => d.platform === target)
-      }
-
-      const tokens = filteredTokens.map((d) => d.token)
-
+      const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
       const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
       successCount = result.successCount
       failureCount = result.failureCount
       finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
-
-      if (result.deadTokens.length > 0) {
-        await db.delete(devices).where(inArray(devices.fcmToken, result.deadTokens))
-      }
     }
   } catch (err) {
     console.error('[Send] Error:', err)
@@ -208,11 +201,16 @@ export async function sendNotificationCore(
     }
   }
 
-  // ── 5. Update notification record ─────────────────────────────────────────
   await db
     .update(notifications)
     .set({ status: finalStatus, sentAt: new Date().toISOString(), recipientCount: successCount })
     .where(eq(notifications.id, notificationId))
 
-  return { success: true, notificationId, recipientCount: successCount, failureCount, status: finalStatus as unknown as 'sent' | 'failed' }
+  return {
+    success: true,
+    notificationId,
+    recipientCount: successCount,
+    failureCount,
+    status: finalStatus === 'completed' ? 'sent' : 'failed',
+  }
 }

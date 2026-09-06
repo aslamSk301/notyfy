@@ -56,11 +56,11 @@ export interface TopicConfig {
 }
 
 export interface SystemTopics {
-  allUsers:    string // "all_users"
-  country?:    string // "country_in"
-  language?:   string // "language_en"
-  os?:         string // "os_android"
-  appVersion?: string // "version_2_0_0"
+  allUsers:    string
+  country?:    string
+  language?:   string
+  os?:         string
+  appVersion?: string
 }
 
 export type CampaignTargetType = 'topic' | 'device' | 'segment'

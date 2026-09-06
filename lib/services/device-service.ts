@@ -7,18 +7,13 @@ import { eq, and } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects, devices } from '@/lib/db/schema'
 import { generateSecureToken } from '@/lib/utils'
-import {
-  normalizeCountryTopic,
-  normalizeLanguageTopic,
-  normalizeOsTopic,
-  normalizeVersionTopic,
-} from '@/lib/utils/topic-normalizer'
+import { buildSystemTopicNames } from '@/lib/utils/topic-normalizer'
+import { syncDeviceSystemTopics } from '@/lib/services/topic-sync'
 import type {
   RegisterDeviceInput,
   UpdateDeviceInput,
   UpdateDeviceTokenInput,
   DeviceHeartbeatInput,
-  SystemTopics,
 } from '@/types/onesignal'
 
 /** Helper to authenticate public API calls via appId + apiKey */
@@ -85,19 +80,46 @@ export async function registerDevice(input: RegisterDeviceInput) {
     })
   }
 
-  // Calculate system topics for client SDK to auto-subscribe
-  const topics: SystemTopics = {
-    allUsers:   'all_users',
-    country:    normalizeCountryTopic(payload.country ?? undefined) ?? undefined,
-    language:   normalizeLanguageTopic(payload.language ?? undefined) ?? undefined,
-    os:         normalizeOsTopic(payload.platform ?? undefined) ?? undefined,
-    appVersion: normalizeVersionTopic(payload.appVersion ?? undefined) ?? undefined,
+  let systemTopics: string[] = []
+  try {
+    systemTopics = await syncDeviceSystemTopics({
+      projectId:        project.id,
+      appId:            project.appId,
+      dbDeviceId:       subscriptionId,
+      fcmToken:         payload.fcmToken,
+      previousToken:    existingDevice?.fcmToken ?? tokenHolder?.fcmToken,
+      firebaseJsonPath: project.firebaseJsonPath,
+      next: {
+        platform:   payload.platform,
+        deviceOs:   payload.osVersion,
+        country:    payload.country,
+        language:   payload.language,
+        appVersion: payload.appVersion,
+      },
+      previous: existingDevice
+        ? {
+            platform:   existingDevice.platform,
+            deviceOs:   existingDevice.deviceOs ?? existingDevice.osVersion,
+            country:    existingDevice.country,
+            language:   existingDevice.language,
+            appVersion: existingDevice.appVersion,
+          }
+        : null,
+    })
+  } catch (err) {
+    console.error('[Topics] register sync failed:', err)
+    systemTopics = buildSystemTopicNames(project.appId, {
+      platform: payload.platform,
+      country: payload.country,
+      language: payload.language,
+      appVersion: payload.appVersion,
+    })
   }
 
   return {
     subscriptionId,
-    status: 'active',
-    topics,
+    status: 'active' as const,
+    topics: systemTopics,
   }
 }
 
@@ -132,6 +154,33 @@ export async function updateDevice(input: UpdateDeviceInput) {
   }
 
   await db.update(devices).set(updateData).where(eq(devices.id, device.id))
+
+  try {
+    await syncDeviceSystemTopics({
+      projectId:        project.id,
+      appId:            project.appId,
+      dbDeviceId:       device.id,
+      fcmToken:         device.fcmToken,
+      firebaseJsonPath: project.firebaseJsonPath,
+      next: {
+        platform:   device.platform,
+        deviceOs:   updateData.osVersion ?? device.deviceOs ?? device.osVersion,
+        country:    updateData.country ?? device.country,
+        language:   updateData.language ?? device.language,
+        appVersion: updateData.appVersion ?? device.appVersion,
+      },
+      previous: {
+        platform:   device.platform,
+        deviceOs:   device.deviceOs ?? device.osVersion,
+        country:    device.country,
+        language:   device.language,
+        appVersion: device.appVersion,
+      },
+    })
+  } catch (err) {
+    console.error('[Topics] update sync failed:', err)
+  }
+
   return { success: true, subscriptionId: device.id }
 }
 
@@ -149,6 +198,8 @@ export async function updateDeviceToken(input: UpdateDeviceTokenInput) {
 
   if (!device) throw new Error('Device subscription not found')
 
+  const oldToken = device.fcmToken
+
   await db.update(devices).set({
     fcmToken:        input.fcmToken,
     status:          'active',
@@ -156,6 +207,33 @@ export async function updateDeviceToken(input: UpdateDeviceTokenInput) {
     lastTokenUpdate: now,
     updatedAt:       now,
   }).where(eq(devices.id, device.id))
+
+  try {
+    await syncDeviceSystemTopics({
+      projectId:        project.id,
+      appId:            project.appId,
+      dbDeviceId:       device.id,
+      fcmToken:         input.fcmToken,
+      previousToken:    oldToken,
+      firebaseJsonPath: project.firebaseJsonPath,
+      next: {
+        platform:   device.platform,
+        deviceOs:   device.deviceOs ?? device.osVersion,
+        country:    device.country,
+        language:   device.language,
+        appVersion: device.appVersion,
+      },
+      previous: {
+        platform:   device.platform,
+        deviceOs:   device.deviceOs ?? device.osVersion,
+        country:    device.country,
+        language:   device.language,
+        appVersion: device.appVersion,
+      },
+    })
+  } catch (err) {
+    console.error('[Topics] token sync failed:', err)
+  }
 
   return { success: true, subscriptionId: device.id }
 }

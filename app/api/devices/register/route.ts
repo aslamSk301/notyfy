@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { registerDevice } from '@/lib/services/device-service'
+import { countryFromRequest } from '@/lib/utils/topic-normalizer'
 
 const registerSchema = z.object({
   appId:                  z.string().min(1, 'appId is required'),
@@ -29,7 +30,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const result = await registerDevice(parsed.data)
+    const country = countryFromRequest(req.headers, parsed.data.country)
+    const result = await registerDevice({ ...parsed.data, country })
     return NextResponse.json({ success: true, ...result })
   } catch (err) {
     const msg = (err as Error).message

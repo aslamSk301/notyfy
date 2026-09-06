@@ -36,7 +36,6 @@ export async function createTopic(input: CreateTopicInput) {
   }
 
   const db  = await getDb()
-  const now = new Date().toISOString()
 
   // Check if topic already exists for project
   const [existing] = await db
@@ -47,7 +46,7 @@ export async function createTopic(input: CreateTopicInput) {
 
   if (existing) {
     if (!existing.isActive) {
-      await db.update(topics).set({ isActive: true, updatedAt: now }).where(eq(topics.id, existing.id))
+      await db.update(topics).set({ isActive: true }).where(eq(topics.id, existing.id))
       return { ...existing, isActive: true }
     }
     return existing
@@ -58,10 +57,10 @@ export async function createTopic(input: CreateTopicInput) {
     projectId:   input.projectId,
     name:        input.name,
     type:        input.type ?? 'custom',
+    category:    'custom' as const,
     description: input.description ?? null,
     isActive:    true,
-    createdAt:   now,
-    updatedAt:   now,
+    createdAt:   new Date().toISOString(),
   }
 
   await db.insert(topics).values(newTopic)
@@ -71,11 +70,9 @@ export async function createTopic(input: CreateTopicInput) {
 /** Soft delete / deactivate a topic */
 export async function deleteTopic(topicId: string, projectId: string) {
   const db  = await getDb()
-  const now = new Date().toISOString()
 
   await db.update(topics).set({
     isActive:  false,
-    updatedAt: now,
   }).where(and(eq(topics.id, topicId), eq(topics.projectId, projectId)))
 
   return { success: true }

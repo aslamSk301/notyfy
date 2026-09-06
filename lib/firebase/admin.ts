@@ -91,66 +91,9 @@ async function sendOne(
 ): Promise<{ success: boolean; isDeadToken: boolean }> {
   const urlEndpoint = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`
 
-  const targetUrl = options?.url || options?.data?.url
-  const imageUrl  = options?.imageUrl || options?.data?.imageUrl
-
-  const combinedData: Record<string, string> = {
-    ...(options?.data || {}),
-    ...(targetUrl ? { url: targetUrl, link: targetUrl } : {}),
-    ...(imageUrl ? { imageUrl } : {}),
-  }
-
   const messagePayload: Record<string, any> = {
     token: fcmToken,
-    notification: {
-      title,
-      body,
-      ...(imageUrl && { image: imageUrl }),
-    },
-    ...(Object.keys(combinedData).length > 0 && { data: combinedData }),
-    android: {
-      priority: 'high',
-      notification: {
-        sound: 'default',
-        channel_id: 'notifymvp_heads_up_v4',
-        notification_priority: 'PRIORITY_MAX',
-        default_sound: true,
-        default_vibrate_timings: true,
-        visibility: 'PUBLIC',
-        ...(imageUrl && { image: imageUrl }),
-      },
-    },
-    webpush: {
-      headers: {
-        ...(imageUrl && { image: imageUrl }),
-      },
-      fcm_options: {
-        ...(targetUrl && { link: targetUrl }),
-      },
-      notification: {
-        title,
-        body,
-        ...(imageUrl && { image: imageUrl }),
-      },
-    },
-    apns: {
-      headers: {
-        'apns-priority': '10',
-        'apns-push-type': 'alert',
-      },
-      payload: {
-        aps: {
-          alert: {
-            title,
-            body,
-          },
-          sound: 'default',
-          badge: 1,
-          'mutable-content': 1,
-        },
-      },
-      ...(imageUrl && { fcm_options: { image: imageUrl } }),
-    },
+    ...buildNotificationFields(title, body, options),
   }
 
   const res = await fetch(urlEndpoint, {
@@ -217,18 +160,75 @@ export async function sendMulticastNotification(
   return { successCount, failureCount, deadTokens }
 }
 
-/**
- * Send a notification to an FCM topic.
- * One API call reaches all devices subscribed to the topic — no token loop needed.
- *
- * @param topicName  e.g. "all_app_abc123", "android_app_abc123", "sports"
- */
-export async function sendToTopic(
+function buildNotificationFields(
+  title: string,
+  body: string,
+  options?: FcmOptionsInput
+): Record<string, unknown> {
+  const targetUrl = options?.url || options?.data?.url
+  const imageUrl  = options?.imageUrl || options?.data?.imageUrl
+  const combinedData: Record<string, string> = {
+    ...(options?.data || {}),
+    ...(targetUrl ? { url: targetUrl, link: targetUrl } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+  }
+
+  return {
+    notification: {
+      title,
+      body,
+      ...(imageUrl && { image: imageUrl }),
+    },
+    ...(Object.keys(combinedData).length > 0 && { data: combinedData }),
+    android: {
+      priority: 'high',
+      notification: {
+        sound: 'default',
+        channel_id: 'notifymvp_heads_up_v4',
+        notification_priority: 'PRIORITY_MAX',
+        default_sound: true,
+        default_vibrate_timings: true,
+        visibility: 'PUBLIC',
+        ...(imageUrl && { image: imageUrl }),
+      },
+    },
+    webpush: {
+      headers: {
+        ...(imageUrl && { image: imageUrl }),
+      },
+      fcm_options: {
+        ...(targetUrl && { link: targetUrl }),
+      },
+      notification: {
+        title,
+        body,
+        ...(imageUrl && { image: imageUrl }),
+      },
+    },
+    apns: {
+      headers: {
+        'apns-priority': '10',
+        'apns-push-type': 'alert',
+      },
+      payload: {
+        aps: {
+          alert: { title, body },
+          sound: 'default',
+          badge: 1,
+          'mutable-content': 1,
+        },
+      },
+      ...(imageUrl && { fcm_options: { image: imageUrl } }),
+    },
+  }
+}
+
+async function sendFanout(
   credentials: FirebaseCredentials,
-  topicName:   string,
-  title:       string,
-  body:        string,
-  data?:       Record<string, string>
+  target: { topic?: string; condition?: string },
+  title: string,
+  body: string,
+  options?: FcmOptionsInput
 ): Promise<{ success: boolean; error?: string }> {
   const accessToken = await getAccessToken(credentials)
   const url = `https://fcm.googleapis.com/v1/projects/${credentials.project_id}/messages:send`
@@ -238,11 +238,9 @@ export async function sendToTopic(
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       message: {
-        topic: topicName,
-        notification: { title, body },
-        ...(data && { data }),
-        android: { priority: 'high', notification: { sound: 'default' } },
-        apns:    { payload: { aps: { sound: 'default', badge: 1 } } },
+        ...(target.topic ? { topic: target.topic } : {}),
+        ...(target.condition ? { condition: target.condition } : {}),
+        ...buildNotificationFields(title, body, options),
       },
     }),
   })
@@ -250,6 +248,37 @@ export async function sendToTopic(
   if (res.ok) return { success: true }
   const err = (await res.json()) as { error?: { message?: string } }
   return { success: false, error: err.error?.message ?? `HTTP ${res.status}` }
+}
+
+/**
+ * One FCM call — Google fans out to every token subscribed to the topic.
+ */
+export async function sendToTopic(
+  credentials: FirebaseCredentials,
+  topicName:   string,
+  title:       string,
+  body:        string,
+  options?:    FcmOptionsInput | Record<string, string>
+): Promise<{ success: boolean; error?: string }> {
+  const fcmOpts: FcmOptionsInput =
+    options && ('url' in options || 'imageUrl' in options || 'data' in options)
+      ? (options as FcmOptionsInput)
+      : { data: options as Record<string, string> | undefined }
+  return sendFanout(credentials, { topic: topicName }, title, body, fcmOpts)
+}
+
+/**
+ * AND/OR across up to 5 topics, e.g.
+ * `'version_2_app_x' in topics && 'country_in_app_x' in topics`
+ */
+export async function sendToCondition(
+  credentials: FirebaseCredentials,
+  condition:   string,
+  title:       string,
+  body:        string,
+  options?:    FcmOptionsInput
+): Promise<{ success: boolean; error?: string }> {
+  return sendFanout(credentials, { condition }, title, body, options)
 }
 
 /**

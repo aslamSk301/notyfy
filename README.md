@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# NotifyMVP
 
-## Getting Started
+Open-source push notifications for startups that cannot pay OneSignal prices.
 
-First, run the development server:
+Clone it. Deploy it on **your** Cloudflare account. Plug in **your** Firebase project. That is the product.
 
-```bash.
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+If this is useful, **star the repo** — it is the only “pricing page” we have.
+
+[Deploy on Cloudflare](./DEPLOY.md) · [MIT License](./LICENSE) · [LinkedIn](https://www.linkedin.com/in/YOUR-PROFILE)
+
+---
+
+## Why this exists
+
+OneSignal-class tools are going paid. For a startup that is still finding users, a monthly push bill is the wrong bill.
+
+NotifyMVP is a dashboard + device SDK + FCM topic fan-out you host yourself:
+
+- Cloudflare **Workers** (app)
+- Cloudflare **D1** (database)
+- Cloudflare **R2** (Firebase service-account JSON)
+- **Firebase Cloud Messaging** (delivery)
+
+No vendor lock on the notification SaaS. You already have Cloudflare and Firebase, or you can create both for free.
+
+---
+
+## Features
+
+- Register Android / iOS / Flutter / React Native devices
+- System FCM topics: all users, OS, country, language, app version (major + exact)
+- Dashboard: send to all, platform, topic, or a single external user id
+- Google + email login for the dashboard
+- Your Firebase credentials stay in your R2 bucket
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/YOUR-GITHUB-USERNAME/notifyMVP.git
+cd notifyMVP/my-app
+npm install
+npx wrangler login
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then follow **[DEPLOY.md](./DEPLOY.md)** for D1, R2, Google OAuth, secrets, migrations, and `npm run deploy`.
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+After deploy:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Log in
+2. Create a project (copy `appId` + `apiKey`)
+3. Upload the Firebase service-account JSON
+4. Point the mobile SDK at your Worker URL
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## Like / follow
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Star this GitHub repo if you deploy it or fork it
+- Follow on LinkedIn: [https://www.linkedin.com/in/YOUR-PROFILE](https://www.linkedin.com/in/YOUR-PROFILE)  
+  *(paste your profile URL here)*
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## Contribute
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This is free software. Help is welcome.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Fork the repo
+2. Create a branch: `git checkout -b fix/your-change`
+3. Keep the change small (one bug or one feature)
+4. Do not commit `.env`, Firebase JSON, or `wrangler` secrets
+5. Open a pull request that says **why**, not only what
+
+Useful contributions:
+
+- Docs and deploy-guide fixes
+- Dashboard UX
+- SDK bugs (Android / iOS / Flutter / RN)
+- D1 migration safety
+- Tests around topic naming and register
+
+Questions and bugs: GitHub Issues.
+
+---
+
+## License
+
+[MIT](./LICENSE). Use it commercially. Attribution is the license notice in copies of the Software.
+
+---
+
+## Repo layout
+
+```text
+my-app/                 ← this dashboard (deploy this Worker)
+notify_android_sdk/
+notify_ios_sdk/
+notify_flutter_sdk/
+notify_rn_sdk/
+```
+
+Full Cloudflare + auth + Firebase walkthrough: **[DEPLOY.md](./DEPLOY.md)**.

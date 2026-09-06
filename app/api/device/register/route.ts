@@ -2,20 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { eq, and } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
-import { projects, devices, topics, deviceTopics } from '@/lib/db/schema'
+import { projects, devices } from '@/lib/db/schema'
 import { generateSecureToken } from '@/lib/utils'
-import { subscribeTokensToTopic } from '@/lib/firebase/admin'
-import { downloadFromR2 } from '@/lib/r2/client'
-import type { FirebaseCredentials } from '@/lib/firebase/admin'
+import { countryFromRequest } from '@/lib/utils/topic-normalizer'
+import { syncDeviceSystemTopics } from '@/lib/services/topic-sync'
 
 /**
  * POST /api/device/register
  *
- * Public endpoint — authenticated by appId + apiKey.
- * Accepts enhanced device metadata (OneSignal-compatible).
- * Auto-subscribes device to:
- *   - all_{appId}                  → all devices in this project
- *   - {platform}_{appId}           → platform-specific topic
+ * Public endpoint — appId + apiKey.
+ * Subscribes the FCM token to system topics (all / OS / country / language / version).
  */
 
 const schema = z.object({
@@ -24,14 +20,14 @@ const schema = z.object({
   fcmToken:       z.string().optional().default(''),
   platform:       z.enum(['android', 'ios', 'flutter', 'react-native']),
   deviceId:       z.string().min(1, 'deviceId is required'),
-  // Enhanced fields (all optional — for OneSignal parity)
   appVersion:     z.string().optional(),
-  deviceModel:    z.string().optional(),   // "Samsung Galaxy S24"
-  deviceOs:       z.string().optional(),   // "Android 14"
-  language:       z.string().optional(),   // "en"
-  timezone:       z.string().optional(),   // "Asia/Karachi"
-  externalUserId: z.string().optional(),   // developer's own user ID
-  sdkVersion:     z.string().optional(),   // "1.0.0"
+  deviceModel:    z.string().optional(),
+  deviceOs:       z.string().optional(),
+  language:       z.string().optional(),
+  timezone:       z.string().optional(),
+  country:        z.string().optional(),
+  externalUserId: z.string().optional(),
+  sdkVersion:     z.string().optional(),
 })
 
 export async function POST(request: NextRequest) {
@@ -54,11 +50,16 @@ export async function POST(request: NextRequest) {
       timezone, externalUserId, sdkVersion,
     } = parsed.data
 
+    const country = countryFromRequest(request.headers, parsed.data.country)
+
     const db = await getDb()
 
-    // ── Validate appId + apiKey ───────────────────────────────────────────────
     const [project] = await db
-      .select({ id: projects.id, appId: projects.appId, firebaseJsonPath: projects.firebaseJsonPath })
+      .select({
+        id: projects.id,
+        appId: projects.appId,
+        firebaseJsonPath: projects.firebaseJsonPath,
+      })
       .from(projects)
       .where(and(eq(projects.appId, appId), eq(projects.apiKey, apiKey)))
       .limit(1)
@@ -69,28 +70,28 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString()
 
-    // ── Upsert device ─────────────────────────────────────────────────────────
     const [existing] = await db
-      .select({ id: devices.id, fcmToken: devices.fcmToken })
+      .select()
       .from(devices)
       .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
       .limit(1)
 
     const oldToken = existing?.fcmToken
     const activeToken = fcmToken || oldToken || `pending_${deviceId}`
-    const newDeviceId = generateSecureToken(16)
-    const targetDbDeviceId = existing?.id || newDeviceId
+    const targetDbDeviceId = existing?.id || generateSecureToken(16)
 
     if (existing) {
       await db
         .update(devices)
         .set({
           fcmToken:           activeToken,
+          platform,
           appVersion:         appVersion     ?? undefined,
           deviceModel:        deviceModel    ?? undefined,
           deviceOs:           deviceOs       ?? undefined,
           language:           language       ?? undefined,
           timezone:           timezone       ?? undefined,
+          country:            country        ?? undefined,
           externalUserId:     externalUserId ?? undefined,
           sdkVersion:         sdkVersion     ?? undefined,
           subscriptionStatus: 'subscribed',
@@ -111,6 +112,7 @@ export async function POST(request: NextRequest) {
         deviceOs:               deviceOs       ?? null,
         language:               language       ?? null,
         timezone:               timezone       ?? null,
+        country:                country        ?? null,
         externalUserId:         externalUserId ?? null,
         sdkVersion:             sdkVersion     ?? null,
         subscriptionStatus:     'subscribed',
@@ -122,96 +124,52 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // ── Auto-assign default topics in D1 (all_{appId}, {platform}_{appId}) ────
-    try {
-      const defaultTopicNames = [`all_${project.appId}`, `${platform}_${project.appId}`]
-      for (const tName of defaultTopicNames) {
-        let [existingTopic] = await db
-          .select({ id: topics.id })
-          .from(topics)
-          .where(and(eq(topics.projectId, project.id), eq(topics.name, tName)))
-          .limit(1)
-
-        let topicId = existingTopic?.id
-        if (!topicId) {
-          topicId = generateSecureToken(16)
-          await db.insert(topics).values({
-            id: topicId,
-            projectId: project.id,
-            name: tName,
-            type: 'system',
-            description: `System topic ${tName}`,
-          }).onConflictDoNothing()
-        }
-
-        if (topicId && targetDbDeviceId) {
-          await db.insert(deviceTopics).values({
-            id: generateSecureToken(16),
-            deviceId: targetDbDeviceId,
-            topicId,
-          }).onConflictDoNothing()
-        }
-      }
-    } catch (topicErr) {
-      console.error('[Topics] D1 topic assignment error:', topicErr)
+    const nextAttrs = {
+      platform,
+      deviceOs:   deviceOs ?? existing?.deviceOs,
+      country:    country ?? existing?.country,
+      language:   language ?? existing?.language,
+      appVersion: appVersion ?? existing?.appVersion,
     }
 
-    // ── Auto-subscribe to topics (fire and forget) ────────────────────────────
-    // Only if firebase credentials & valid FCM token exist (not pending_)
-    if (project.firebaseJsonPath && activeToken && !activeToken.startsWith('pending_')) {
-      autoSubscribeTopics({
-        projectId:    project.id,
-        appId:        project.appId,
-        fcmToken:     activeToken,
-        oldToken:     oldToken && oldToken !== activeToken ? oldToken : undefined,
-        platform,
-        firebasePath: project.firebaseJsonPath,
-      }).catch((err) => {
-        console.error('[Topics] Auto-subscribe failed:', err)
+    const previousAttrs = existing
+      ? {
+          platform:   existing.platform,
+          deviceOs:   existing.deviceOs,
+          country:    existing.country,
+          language:   existing.language,
+          appVersion: existing.appVersion,
+        }
+      : null
+
+    let topicNames: string[] = []
+    try {
+      topicNames = await syncDeviceSystemTopics({
+        projectId:        project.id,
+        appId:            project.appId,
+        dbDeviceId:       targetDbDeviceId,
+        fcmToken:         activeToken,
+        previousToken:    oldToken,
+        firebaseJsonPath: project.firebaseJsonPath,
+        next:             nextAttrs,
+        previous:         previousAttrs,
       })
+    } catch (topicErr) {
+      console.error('[Topics] System topic sync failed:', topicErr)
     }
 
     return NextResponse.json({
       success: true,
       message: 'Device registered successfully',
-      data: { deviceId, platform },
+      subscriptionId: targetDbDeviceId,
+      data: { deviceId, platform, subscriptionId: targetDbDeviceId, topics: topicNames },
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[Device Register Error]', err)
+    const message = err instanceof Error ? err.message : 'Internal Server Error'
     return NextResponse.json(
-      { success: false, error: err?.message || 'Internal Server Error' },
+      { success: false, error: message },
       { status: 500 }
     )
   }
-}
-
-// ── Internal — auto-subscribe device to standard topics ──────────────────────
-async function autoSubscribeTopics(opts: {
-  projectId:    string
-  appId:        string
-  fcmToken:     string
-  oldToken?:    string
-  platform:     string
-  firebasePath: string
-}) {
-  const { appId, fcmToken, platform, firebasePath } = opts
-
-  const fileContent = await downloadFromR2(firebasePath)
-  if (!fileContent) return
-
-  let credentials: FirebaseCredentials
-  try { credentials = JSON.parse(fileContent) as FirebaseCredentials }
-  catch { return }
-
-  // Standard auto-topics
-  const topicsToSubscribe = [
-    `all_${appId}`,             // all devices in this project
-    `${platform}_${appId}`,     // e.g. android_app_abc123
-  ]
-
-  await Promise.allSettled(
-    topicsToSubscribe.map((topic) =>
-      subscribeTokensToTopic(credentials, [fcmToken], topic)
-    )
-  )
 }
