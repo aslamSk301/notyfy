@@ -255,7 +255,35 @@ Then:
 2. **Projects** → create an app (you get `appId` + `apiKey`).
 3. Firebase Console → Project settings → **Service accounts** → Generate new private key (JSON).
 4. Upload that JSON on the NotifyMVP project card. It is stored in **R2** (`firebase-credentials`). The Worker never needs the file in git.
-5. Put `appId` / `apiKey` in your Android / iOS / Flutter / RN SDK. Base URL = your Worker origin.
+5. Install an SDK — links and one-liners are in [README.md → SDKs](./README.md#sdks--kahan-se-download--install). Set `baseUrl` to your Worker origin.
+
+   - React Native (npm): https://www.npmjs.com/package/@notifymvp/react-native-sdk
+
+6. (Optional) Send / list from your own backend / custom dashboard via REST:
+
+```bash
+# All users
+curl -X POST "https://YOUR-WORKER/api/v1/notifications" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Hello","body":"Broadcast","target":"all"}'
+
+# One user by External User ID
+curl -X POST "https://YOUR-WORKER/api/v1/notifications" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Hello","body":"For you","include_external_user_ids":["USER_ID"]}'
+
+# List devices (custom dashboard)
+curl "https://YOUR-WORKER/api/v1/devices?limit=20&page=1" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# List topics
+curl "https://YOUR-WORKER/api/v1/topics" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Full snippets: dashboard → **API Keys & Docs**.
 
 Devices register at:
 

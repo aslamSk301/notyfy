@@ -5,7 +5,7 @@
  * Segments and explicit token lists still walk D1.
  */
 
-import { eq, and, inArray, sql } from 'drizzle-orm'
+import { eq, and, or, inArray, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects, devices, notifications, topics, deviceTopics } from '@/lib/db/schema'
 import { downloadFromR2 } from '@/lib/r2/client'
@@ -24,6 +24,7 @@ export interface SendResult {
   notificationId?: string
   recipientCount?: number
   failureCount?:   number
+  matchedDevices?: number
   status?:         'sent' | 'failed'
   error?:          string
 }
@@ -170,18 +171,100 @@ export async function sendNotificationCore(
       if (!audience.userId) {
         return { success: false, error: 'User id is required' }
       }
-      const deviceRows = await db
-        .select({ fcmToken: devices.fcmToken })
-        .from(devices)
-        .where(and(
-          eq(devices.projectId, projectId),
-          eq(devices.externalUserId, audience.userId),
-        ))
-      const tokens = deviceRows.map((d) => d.fcmToken).filter(Boolean)
+
+      // D1 read replicas can be stale after a recent device register/link.
+      // Retry once after a short delay so the replica catches up.
+      const MAX_USER_LOOKUP_ATTEMPTS = 2
+      const REPLICA_LAG_DELAY_MS     = 1500
+      let tokens: string[] = []
+      let rawDeviceCount = 0
+
+      for (let attempt = 1; attempt <= MAX_USER_LOOKUP_ATTEMPTS; attempt++) {
+        const deviceRows = await db
+          .select({ fcmToken: devices.fcmToken })
+          .from(devices)
+          .where(and(
+            eq(devices.projectId, projectId),
+            eq(devices.status, 'active'),
+            or(
+              eq(devices.externalUserId, audience.userId),
+              eq(devices.userId, audience.userId),
+            ),
+          ))
+        rawDeviceCount = deviceRows.length
+        tokens = deviceRows
+          .map((d) => d.fcmToken)
+          .filter((t): t is string => Boolean(t) && !String(t).startsWith('pending_'))
+
+        if (tokens.length > 0) break
+
+        // If no active devices found, also try without status filter (device
+        // may still be 'active' but column never written on older rows).
+        if (rawDeviceCount === 0) {
+          const fallbackRows = await db
+            .select({ fcmToken: devices.fcmToken })
+            .from(devices)
+            .where(and(
+              eq(devices.projectId, projectId),
+              or(
+                eq(devices.externalUserId, audience.userId),
+                eq(devices.userId, audience.userId),
+              ),
+            ))
+          rawDeviceCount = fallbackRows.length
+          tokens = fallbackRows
+            .map((d) => d.fcmToken)
+            .filter((t): t is string => Boolean(t) && !String(t).startsWith('pending_'))
+          if (tokens.length > 0) break
+        }
+
+        if (attempt < MAX_USER_LOOKUP_ATTEMPTS) {
+          console.log(
+            `[Send] 0 devices for user "${audience.userId}" (attempt ${attempt}) — ` +
+            `retrying after ${REPLICA_LAG_DELAY_MS}ms (D1 replica lag)…`
+          )
+          await new Promise(r => setTimeout(r, REPLICA_LAG_DELAY_MS))
+        }
+      }
+
+      if (tokens.length === 0) {
+        await db.update(notifications)
+          .set({ status: 'failed', sentAt: new Date().toISOString(), recipientCount: 0 })
+          .where(eq(notifications.id, notificationId))
+        return {
+          success: false,
+          error: `No devices linked to external user "${audience.userId}"`,
+          notificationId,
+          recipientCount: 0,
+          matchedDevices: rawDeviceCount,
+        }
+      }
+
       const result = await sendMulticastNotification(credentials, tokens, title, body, fcmSendOptions)
       successCount = result.successCount
       failureCount = result.failureCount
-      finalStatus  = successCount > 0 || tokens.length === 0 ? 'completed' : 'failed'
+      finalStatus  = successCount > 0 ? 'completed' : 'failed'
+
+      if (result.deadTokens.length > 0) {
+        await db
+          .update(devices)
+          .set({ status: 'inactive', inactiveAt: new Date().toISOString() })
+          .where(inArray(devices.fcmToken, result.deadTokens))
+      }
+
+      if (successCount === 0) {
+        await db.update(notifications)
+          .set({ status: 'failed', sentAt: new Date().toISOString(), recipientCount: 0 })
+          .where(eq(notifications.id, notificationId))
+        return {
+          success: false,
+          error: `Linked devices found (${tokens.length}) but FCM delivered to 0`,
+          notificationId,
+          recipientCount: 0,
+          matchedDevices: tokens.length,
+          failureCount,
+        }
+      }
     } else {
       const deviceRows = await db
         .select({ fcmToken: devices.fcmToken })

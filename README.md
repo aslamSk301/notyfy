@@ -51,7 +51,86 @@ After deploy:
 1. Log in
 2. Create a project (copy `appId` + `apiKey`)
 3. Upload the Firebase service-account JSON
-4. Point the mobile SDK at your Worker URL
+4. Install an SDK from the table below. Set `baseUrl` to **your** Worker URL (`https://notifymvp.<account>.workers.dev` or your custom domain)
+
+---
+
+## SDKs — kahan se download / install
+
+`baseUrl` = **tumhara** Cloudflare Worker URL. `appId` + `apiKey` dashboard → Projects se.
+
+| Platform | Download / install | Repo / package |
+|---|---|---|
+| **Android** | [JitPack — aslamSk301/notify-android-sdk](https://jitpack.io/#aslamSk301/notify-android-sdk) | [github.com/aslamSk301/notify-android-sdk](https://github.com/aslamSk301/notify-android-sdk) |
+| **iOS** | Xcode → Add Package | [github.com/aslamSk301/notify-ios-sdk](https://github.com/aslamSk301/notify-ios-sdk) |
+| **Flutter** | [pub.dev/packages/notify_mvp](https://pub.dev/packages/notify_mvp) | package name: `notify_mvp` |
+| **React Native** | https://www.npmjs.com/package/@notifymvp/react-native-sdk | `npm i @notifymvp/react-native-sdk` |
+
+### Android (JitPack)
+
+```kotlin
+// settings.gradle.kts
+maven { url = uri("https://jitpack.io") }
+
+// app/build.gradle.kts
+implementation("com.github.aslamSk301:notify-android-sdk:1.1.1")
+implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
+implementation("com.google.firebase:firebase-messaging-ktx")
+```
+
+Docs: [notify_android_sdk/README.md](https://github.com/aslamSk301/notify-android-sdk#readme)
+
+### iOS (Swift Package Manager)
+
+```text
+https://github.com/aslamSk301/notify-ios-sdk.git
+```
+
+Xcode → File → Add Package Dependencies… → paste URL. Docs: [notify-ios-sdk README](https://github.com/aslamSk301/notify-ios-sdk#readme)
+
+### Flutter (pub.dev)
+
+```yaml
+dependencies:
+  notify_mvp: ^1.0.2
+```
+
+```bash
+flutter pub add notify_mvp
+```
+
+Package: [pub.dev/packages/notify_mvp](https://pub.dev/packages/notify_mvp)
+
+### React Native (npm)
+
+Package URL: https://www.npmjs.com/package/@notifymvp/react-native-sdk
+
+```bash
+npm install @notifymvp/react-native-sdk @react-native-firebase/app @react-native-firebase/messaging
+```
+
+Monorepo clone (source, not the store): `notify_android_sdk/`, `notify_ios_sdk/`, `notify_flutter_sdk/`, `notify_rn_sdk/` inside this repo.
+
+---
+
+## REST API (custom dashboard)
+
+Auth: `Authorization: Bearer <apiKey>` (or `x-api-key`).
+
+| Goal | Method | Path |
+|---|---|---|
+| Send (all / OS / user) | `POST` | `/api/v1/notifications` |
+| List devices | `GET` | `/api/v1/devices` |
+| List topics | `GET` | `/api/v1/topics` |
+| Stats (total count) | `GET` | `/api/v1/stats` |
+
+**Send to one user:** `"include_external_user_ids": ["USER_ID"]` or `"target": "user:USER_ID"` (SDK must have linked the id).
+
+**Devices filters:** `platform`, `status`, `externalUserId`, `country`, `language`, `appVersion`, `limit`, `offset`. FCM tokens are masked.
+
+**Topics filters:** `type=system|custom`, `active=true|false|all`.
+
+Copy-paste examples: dashboard → **API Keys & Docs**.
 
 ---
 
@@ -95,10 +174,10 @@ Questions and bugs: GitHub Issues.
 
 ```text
 my-app/                 ← this dashboard (deploy this Worker)
-notify_android_sdk/
-notify_ios_sdk/
-notify_flutter_sdk/
-notify_rn_sdk/
+notify_android_sdk/     ← JitPack: aslamSk301/notify-android-sdk
+notify_ios_sdk/         ← SPM: github.com/aslamSk301/notify-ios-sdk
+notify_flutter_sdk/     ← pub.dev: notify_mvp
+notify_rn_sdk/          ← npm: @notifymvp/react-native-sdk
 ```
 
 Full Cloudflare + auth + Firebase walkthrough: **[DEPLOY.md](./DEPLOY.md)**.

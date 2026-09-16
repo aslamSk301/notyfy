@@ -13,6 +13,7 @@ export interface RegisterDeviceInput {
   platform:               PlatformType
   deviceId:               string
   userId?:                string
+  externalUserId?:        string
   country?:               string
   language?:              string
   appVersion?:            string
@@ -26,6 +27,8 @@ export interface UpdateDeviceInput {
   apiKey:                 string
   deviceId:               string
   userId?:                string
+  externalUserId?:        string
+  clear?:                 boolean
   country?:               string
   language?:              string
   appVersion?:            string

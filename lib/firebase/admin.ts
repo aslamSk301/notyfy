@@ -70,7 +70,6 @@ async function getAccessToken(credentials: FirebaseCredentials): Promise<string>
 // ── Dead token error codes ────────────────────────────────────────────────────
 const DEAD_TOKEN_STATUSES = new Set([
   'UNREGISTERED',
-  'INVALID_ARGUMENT',
   'NOT_FOUND',
 ])
 
@@ -104,9 +103,9 @@ async function sendOne(
 
   if (res.ok) return { success: true, isDeadToken: false }
 
-  const errBody = (await res.json()) as { error?: { status?: string; code?: number } }
+  const errBody = (await res.json()) as { error?: { status?: string; code?: number; message?: string } }
   const status  = errBody.error?.status ?? ''
-  console.error(`[FCM] Token failed: status=${status} token=…${fcmToken.slice(-8)}`)
+  console.error(`[FCM] Token failed: status=${status} message=${errBody.error?.message} token=…${fcmToken.slice(-8)}`)
   return { success: false, isDeadToken: DEAD_TOKEN_STATUSES.has(status) }
 }
 
@@ -167,10 +166,19 @@ function buildNotificationFields(
 ): Record<string, unknown> {
   const targetUrl = options?.url || options?.data?.url
   const imageUrl  = options?.imageUrl || options?.data?.imageUrl
-  const combinedData: Record<string, string> = {
-    ...(options?.data || {}),
-    ...(targetUrl ? { url: targetUrl, link: targetUrl } : {}),
-    ...(imageUrl ? { imageUrl } : {}),
+  const rawData = options?.data || {}
+  const combinedData: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rawData)) {
+    if (v !== undefined && v !== null) {
+      combinedData[k] = typeof v === "string" ? v : String(v)
+    }
+  }
+  if (targetUrl) {
+    combinedData.url = String(targetUrl)
+    combinedData.link = String(targetUrl)
+  }
+  if (imageUrl) {
+    combinedData.imageUrl = String(imageUrl)
   }
 
   return {

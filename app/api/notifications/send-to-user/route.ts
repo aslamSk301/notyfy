@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, or } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { projects, devices } from '@/lib/db/schema'
@@ -61,13 +61,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'No Firebase credentials configured' }, { status: 422 })
   }
 
-  // Find all devices with this externalUserId
+  // Find all devices with this externalUserId (or legacy userId)
   const userDevices = await db
     .select({ fcmToken: devices.fcmToken, deviceModel: devices.deviceModel })
     .from(devices)
     .where(and(
       eq(devices.projectId, project.id),
-      eq(devices.externalUserId, externalUserId),
+      or(
+        eq(devices.externalUserId, externalUserId),
+        eq(devices.userId, externalUserId),
+      ),
     ))
 
   if (userDevices.length === 0) {

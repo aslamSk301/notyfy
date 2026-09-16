@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { eq, or } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects } from '@/lib/db/schema'
 import { sendNotificationCore } from '@/lib/send-notification-core'
@@ -58,16 +58,28 @@ export async function POST(req: NextRequest) {
 
     const db = await getDb()
 
-    // Find project by apiKey or appId
-    const conditions = []
-    if (apiKey) conditions.push(eq(projects.apiKey, apiKey))
-    if (appId) conditions.push(eq(projects.appId, appId))
-
-    const [project] = await db
-      .select()
-      .from(projects)
-      .where(or(...conditions))
-      .limit(1)
+    // Prefer apiKey. If both apiKey + appId are sent, require BOTH (never OR),
+    // otherwise a second project could match appId alone and return 0 devices.
+    let project
+    if (apiKey && appId) {
+      ;[project] = await db
+        .select()
+        .from(projects)
+        .where(and(eq(projects.apiKey, apiKey), eq(projects.appId, appId)))
+        .limit(1)
+    } else if (apiKey) {
+      ;[project] = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.apiKey, apiKey))
+        .limit(1)
+    } else if (appId) {
+      ;[project] = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.appId, appId))
+        .limit(1)
+    }
 
     if (!project) {
       return NextResponse.json(

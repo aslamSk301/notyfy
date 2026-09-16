@@ -51,9 +51,17 @@ export async function registerDevice(input: RegisterDeviceInput) {
 
   let subscriptionId = existingDevice?.id ?? tokenHolder?.id ?? generateSecureToken(16)
 
+  const linkedUserId =
+    input.externalUserId ??
+    input.userId ??
+    existingDevice?.externalUserId ??
+    existingDevice?.userId ??
+    null
+
   const payload = {
     projectId:              project.id,
-    userId:                 input.userId ?? existingDevice?.userId ?? null,
+    userId:                 linkedUserId,
+    externalUserId:         linkedUserId,
     deviceId:               input.deviceId,
     fcmToken:               input.fcmToken,
     platform:               input.platform,
@@ -141,7 +149,19 @@ export async function updateDevice(input: UpdateDeviceInput) {
     updatedAt: now,
   }
 
-  if (input.userId !== undefined) updateData.userId = input.userId
+  // `userId` is retained as a compatibility alias because released SDKs use
+  // it for login. Targeted sends query `externalUserId`, so update that field
+  // immediately instead of waiting for the next full device registration.
+  if (input.clear === true) {
+    updateData.userId = null
+    updateData.externalUserId = null
+  } else {
+    const externalUserId = input.externalUserId ?? input.userId
+    if (externalUserId !== undefined) {
+      updateData.userId = externalUserId
+      updateData.externalUserId = externalUserId
+    }
+  }
   if (input.country !== undefined) updateData.country = input.country.toUpperCase()
   if (input.language !== undefined) updateData.language = input.language.toLowerCase()
   if (input.appVersion !== undefined) updateData.appVersion = input.appVersion

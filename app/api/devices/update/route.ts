@@ -7,6 +7,8 @@ const updateSchema = z.object({
   apiKey:                 z.string().min(1),
   deviceId:               z.string().min(1),
   userId:                 z.string().optional(),
+  externalUserId:         z.string().optional(),
+  clear:                  z.boolean().optional(),
   country:                z.string().optional(),
   language:               z.string().optional(),
   appVersion:             z.string().optional(),

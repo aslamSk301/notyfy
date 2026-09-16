@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
     const targetDbDeviceId = existing?.id || generateSecureToken(16)
 
     if (existing) {
+      const linkedUserId = externalUserId ?? existing.externalUserId ?? existing.userId ?? null
       await db
         .update(devices)
         .set({
@@ -92,7 +93,12 @@ export async function POST(request: NextRequest) {
           language:           language       ?? undefined,
           timezone:           timezone       ?? undefined,
           country:            country        ?? undefined,
-          externalUserId:     externalUserId ?? undefined,
+          // NEVER wipe external user link on plain re-register / sync.
+          ...(externalUserId
+            ? { userId: externalUserId, externalUserId }
+            : linkedUserId
+              ? { userId: linkedUserId, externalUserId: linkedUserId }
+              : {}),
           sdkVersion:         sdkVersion     ?? undefined,
           subscriptionStatus: 'subscribed',
           status:             'active',
@@ -113,6 +119,7 @@ export async function POST(request: NextRequest) {
         language:               language       ?? null,
         timezone:               timezone       ?? null,
         country:                country        ?? null,
+        userId:                 externalUserId ?? null,
         externalUserId:         externalUserId ?? null,
         sdkVersion:             sdkVersion     ?? null,
         subscriptionStatus:     'subscribed',
@@ -158,11 +165,19 @@ export async function POST(request: NextRequest) {
       console.error('[Topics] System topic sync failed:', topicErr)
     }
 
+    const finalExternalUserId = externalUserId ?? existing?.externalUserId ?? existing?.userId ?? null
+
     return NextResponse.json({
       success: true,
       message: 'Device registered successfully',
       subscriptionId: targetDbDeviceId,
-      data: { deviceId, platform, subscriptionId: targetDbDeviceId, topics: topicNames },
+      data: {
+        deviceId,
+        platform,
+        subscriptionId: targetDbDeviceId,
+        topics: topicNames,
+        externalUserId: finalExternalUserId,
+      },
     })
   } catch (err: unknown) {
     console.error('[Device Register Error]', err)
