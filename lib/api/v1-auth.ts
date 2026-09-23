@@ -51,6 +51,7 @@ export async function authenticateV1Project(req: NextRequest) {
       appId: projects.appId,
       userId: projects.userId,
       firebaseJsonPath: projects.firebaseJsonPath,
+      firebaseCredentials: projects.firebaseCredentials,
     })
     .from(projects)
     .where(eq(projects.apiKey, apiKey))

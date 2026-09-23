@@ -6,7 +6,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { deviceTopics, topics } from '@/lib/db/schema'
-import { downloadFromR2 } from '@/lib/r2/client'
+import { getProjectCredentials } from '@/lib/firebase/credentials-loader'
 import {
   subscribeTokensToTopic,
   unsubscribeTokensFromTopic,
@@ -18,17 +18,6 @@ import {
   systemTopicColumns,
   type DeviceTopicAttrs,
 } from '@/lib/utils/topic-normalizer'
-
-async function loadCredentials(firebaseJsonPath: string | null): Promise<FirebaseCredentials | null> {
-  if (!firebaseJsonPath) return null
-  try {
-    const fileContent = await downloadFromR2(firebaseJsonPath)
-    if (!fileContent) return null
-    return JSON.parse(fileContent) as FirebaseCredentials
-  } catch {
-    return null
-  }
-}
 
 function isUsableToken(token?: string | null): token is string {
   return !!token && !token.startsWith('pending_')
@@ -82,6 +71,7 @@ export async function syncDeviceSystemTopics(opts: {
   fcmToken?: string | null
   previousToken?: string | null
   firebaseJsonPath?: string | null
+  firebaseCredentials?: string | null
   next: DeviceTopicAttrs
   previous?: DeviceTopicAttrs | null
 }): Promise<string[]> {
@@ -140,7 +130,11 @@ export async function syncDeviceSystemTopics(opts: {
   }
 
   try {
-    const creds = await loadCredentials(opts.firebaseJsonPath ?? null)
+    const creds = (await getProjectCredentials({
+      id: opts.projectId,
+      firebaseCredentials: opts.firebaseCredentials,
+      firebaseJsonPath: opts.firebaseJsonPath,
+    })) as unknown as FirebaseCredentials | null
     const nextToken = isUsableToken(opts.fcmToken) ? opts.fcmToken : null
     const oldToken =
       isUsableToken(opts.previousToken) && opts.previousToken !== nextToken

@@ -128,13 +128,19 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
     const db      = await getDb()
 
     const [project] = await db
-      .select({ id: projects.id, firebaseJsonPath: projects.firebaseJsonPath })
+      .select({
+        id: projects.id,
+        firebaseJsonPath: projects.firebaseJsonPath,
+        firebaseCredentials: projects.firebaseCredentials,
+      })
       .from(projects)
       .where(eq(projects.id, parsed.data.projectId))
       .limit(1)
 
-    if (!project)                  return { error: 'Project not found' }
-    if (!project.firebaseJsonPath) return { error: 'No Firebase credentials uploaded for this project.' }
+    if (!project) return { error: 'Project not found' }
+    if (!project.firebaseCredentials && !project.firebaseJsonPath) {
+      return { error: 'No Firebase credentials uploaded for this project.' }
+    }
 
     // Handle "send to specific user" target
     if (parsed.data.target === 'user') {
@@ -144,7 +150,7 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
 
       const { eq: eqOp, and: andOp } = await import('drizzle-orm')
       const { devices: devicesTable } = await import('@/lib/db/schema')
-      const { downloadFromR2 } = await import('@/lib/r2/client')
+      const { getProjectCredentials } = await import('@/lib/firebase/credentials-loader')
       const { sendMulticastNotification, validateFirebaseCredentials } = await import('@/lib/firebase/admin')
 
       const userDevices = await db
@@ -159,16 +165,15 @@ export async function sendNotification(_prev: unknown, formData: FormData) {
         return { error: `No devices found for user "${parsed.data.externalUserId}"` }
       }
 
-      const fileContent = await downloadFromR2(project.firebaseJsonPath)
-      if (!fileContent) return { error: 'Failed to load Firebase credentials' }
+      const credentials = await getProjectCredentials(project)
+      if (!credentials) return { error: 'Failed to load Firebase credentials' }
 
-      const json = JSON.parse(fileContent) as Record<string, unknown>
-      const v    = validateFirebaseCredentials(json)
+      const v = validateFirebaseCredentials(credentials as unknown as Record<string, unknown>)
       if (!v.valid) return { error: v.error }
 
       const tokens = userDevices.map((d) => d.fcmToken).filter(Boolean)
       const result = await sendMulticastNotification(
-        json as Parameters<typeof sendMulticastNotification>[0],
+        credentials as unknown as Parameters<typeof sendMulticastNotification>[0],
         tokens,
         parsed.data.title,
         parsed.data.body,

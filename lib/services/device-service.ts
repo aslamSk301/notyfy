@@ -141,7 +141,8 @@ export async function registerDevice(input: RegisterDeviceInput) {
         dbDeviceId:       subscriptionId,
         fcmToken:         payload.fcmToken,
         previousToken:    existingDevice?.fcmToken ?? tokenHolder?.fcmToken,
-        firebaseJsonPath: project.firebaseJsonPath,
+        firebaseJsonPath:    project.firebaseJsonPath,
+        firebaseCredentials: project.firebaseCredentials,
         next: {
           platform:   payload.platform,
           deviceOs:   payload.osVersion,
@@ -263,7 +264,8 @@ export async function updateDevice(input: UpdateDeviceInput) {
         appId:            project.appId,
         dbDeviceId:       device.id,
         fcmToken:         device.fcmToken,
-        firebaseJsonPath: project.firebaseJsonPath,
+        firebaseJsonPath:    project.firebaseJsonPath,
+        firebaseCredentials: project.firebaseCredentials,
         next: {
           platform:   device.platform,
           deviceOs:   updateData.osVersion ?? device.deviceOs ?? device.osVersion,
@@ -318,7 +320,8 @@ export async function updateDeviceToken(input: UpdateDeviceTokenInput) {
       dbDeviceId:       device.id,
       fcmToken:         input.fcmToken,
       previousToken:    oldToken,
-      firebaseJsonPath: project.firebaseJsonPath,
+      firebaseJsonPath:    project.firebaseJsonPath,
+      firebaseCredentials: project.firebaseCredentials,
       next: {
         platform:   device.platform,
         deviceOs:   device.deviceOs ?? device.osVersion,

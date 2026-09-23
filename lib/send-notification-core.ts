@@ -8,7 +8,7 @@
 import { eq, and, or, inArray, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { projects, devices, notifications, topics, deviceTopics } from '@/lib/db/schema'
-import { downloadFromR2 } from '@/lib/r2/client'
+import { getProjectCredentials } from '@/lib/firebase/credentials-loader'
 import {
   sendMulticastNotification,
   sendToTopic,
@@ -84,23 +84,14 @@ export async function sendNotificationCore(
     return { success: false, error: 'Project not found' }
   }
 
-  if (!project.firebaseJsonPath) {
+  const credentials = (await getProjectCredentials(project)) as unknown as FirebaseCredentials | null
+  if (!credentials) {
     return { success: false, error: 'No Firebase credentials configured for this project' }
   }
 
-  const fileContent = await downloadFromR2(project.firebaseJsonPath)
-  if (!fileContent) {
-    return { success: false, error: 'Failed to load Firebase credentials from storage' }
-  }
-
-  let credentials: FirebaseCredentials
-  try {
-    const parsed     = JSON.parse(fileContent) as Record<string, unknown>
-    const validation = validateFirebaseCredentials(parsed)
-    if (!validation.valid) return { success: false, error: `Invalid Firebase credentials: ${validation.error}` }
-    credentials = parsed as FirebaseCredentials
-  } catch {
-    return { success: false, error: 'Firebase credentials file is not valid JSON' }
+  const validation = validateFirebaseCredentials(credentials as unknown as Record<string, unknown>)
+  if (!validation.valid) {
+    return { success: false, error: `Invalid Firebase credentials: ${validation.error}` }
   }
 
   const shouldSaveToDb = options?.saveToDb !== false

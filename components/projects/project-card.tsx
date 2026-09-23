@@ -163,7 +163,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <div className="flex items-center gap-2">
             <FileJson className="h-4 w-4 text-[var(--muted-foreground)]" />
             <span className="text-xs text-[var(--muted-foreground)]">Firebase credentials:</span>
-            {project.firebaseJsonPath ? (
+            {project.firebaseCredentials || project.firebaseJsonPath ? (
               <Badge variant="success">
                 <Check className="mr-1 h-3 w-3" />
                 Configured

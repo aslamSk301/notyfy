@@ -3,7 +3,7 @@ import { eq, and, or } from 'drizzle-orm'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { projects, devices } from '@/lib/db/schema'
-import { downloadFromR2 } from '@/lib/r2/client'
+import { getProjectCredentials } from '@/lib/firebase/credentials-loader'
 import {
   sendMulticastNotification,
   validateFirebaseCredentials,
@@ -48,17 +48,18 @@ export async function POST(request: NextRequest) {
 
   // Verify project ownership
   const [project] = await db
-    .select({ id: projects.id, firebaseJsonPath: projects.firebaseJsonPath, appId: projects.appId })
+    .select({
+      id: projects.id,
+      firebaseJsonPath: projects.firebaseJsonPath,
+      firebaseCredentials: projects.firebaseCredentials,
+      appId: projects.appId,
+    })
     .from(projects)
     .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
     .limit(1)
 
   if (!project) {
     return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 })
-  }
-
-  if (!project.firebaseJsonPath) {
-    return NextResponse.json({ success: false, error: 'No Firebase credentials configured' }, { status: 422 })
   }
 
   // Find all devices with this externalUserId (or legacy userId)
@@ -83,20 +84,13 @@ export async function POST(request: NextRequest) {
   const tokens = userDevices.map((d) => d.fcmToken).filter(Boolean)
 
   // Load Firebase credentials
-  const fileContent = await downloadFromR2(project.firebaseJsonPath)
-  if (!fileContent) {
-    return NextResponse.json({ success: false, error: 'Failed to load Firebase credentials' }, { status: 500 })
+  const credentials = (await getProjectCredentials(project)) as unknown as FirebaseCredentials | null
+  if (!credentials) {
+    return NextResponse.json({ success: false, error: 'No Firebase credentials configured' }, { status: 422 })
   }
 
-  let credentials: FirebaseCredentials
-  try {
-    const json = JSON.parse(fileContent) as Record<string, unknown>
-    const v    = validateFirebaseCredentials(json)
-    if (!v.valid) return NextResponse.json({ success: false, error: v.error }, { status: 422 })
-    credentials = json as FirebaseCredentials
-  } catch {
-    return NextResponse.json({ success: false, error: 'Invalid Firebase credentials' }, { status: 500 })
-  }
+  const v = validateFirebaseCredentials(credentials as unknown as Record<string, unknown>)
+  if (!v.valid) return NextResponse.json({ success: false, error: v.error }, { status: 422 })
 
   // Send to all user devices
   const result = await sendMulticastNotification(credentials, tokens, title, notifBody)

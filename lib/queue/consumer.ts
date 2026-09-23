@@ -6,7 +6,7 @@
 import { eq, and } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { notificationCampaigns, projects, devices, notificationLogs } from '@/lib/db/schema'
-import { downloadFromR2 } from '@/lib/r2/client'
+import { getProjectCredentials } from '@/lib/firebase/credentials-loader'
 import {
   sendFcmTopicNotification,
   sendFcmTokenNotification,
@@ -46,25 +46,14 @@ export async function processCampaignQueueJob(job: CampaignQueueMessage) {
     .where(eq(projects.id, campaign.projectId))
     .limit(1)
 
-  if (!project || !project.firebaseJsonPath) {
+  const credentials = project ? await getProjectCredentials(project) : null
+  if (!credentials) {
     await db
       .update(notificationCampaigns)
       .set({ status: 'failed', updatedAt: now })
       .where(eq(notificationCampaigns.id, campaign.id))
     return
   }
-
-  // Download Firebase credentials from R2
-  const credentialsJson = await downloadFromR2(project.firebaseJsonPath)
-  if (!credentialsJson) {
-    await db
-      .update(notificationCampaigns)
-      .set({ status: 'failed', updatedAt: now })
-      .where(eq(notificationCampaigns.id, campaign.id))
-    return
-  }
-
-  const credentials = JSON.parse(credentialsJson) as FirebaseServiceAccount
 
   const payloadData = campaign.data ? JSON.parse(campaign.data) : {}
 

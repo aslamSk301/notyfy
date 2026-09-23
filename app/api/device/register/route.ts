@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
         id: projects.id,
         appId: projects.appId,
         firebaseJsonPath: projects.firebaseJsonPath,
+        firebaseCredentials: projects.firebaseCredentials,
       })
       .from(projects)
       .where(and(eq(projects.appId, appId), eq(projects.apiKey, apiKey)))
@@ -208,7 +209,8 @@ export async function POST(request: NextRequest) {
           dbDeviceId:       targetDbDeviceId,
           fcmToken:         activeToken,
           previousToken:    oldToken,
-          firebaseJsonPath: project.firebaseJsonPath,
+          firebaseJsonPath:    project.firebaseJsonPath,
+          firebaseCredentials: project.firebaseCredentials,
           next:             nextAttrs,
           previous:         previousAttrs,
         })

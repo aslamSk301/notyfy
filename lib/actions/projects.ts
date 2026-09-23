@@ -6,8 +6,9 @@ import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { projects, users } from '@/lib/db/schema'
 import { requireSession } from '@/lib/auth/session'
-import { uploadToR2, deleteFromR2, buildFirebaseCredentialsKey } from '@/lib/r2/client'
+import { deleteFromR2 } from '@/lib/r2/client'
 import { generateAppId, generateSecureToken } from '@/lib/utils'
+import { encryptText } from '@/lib/crypto/encryption'
 
 const createSchema = z.object({
   name: z.string().min(1, 'Project name is required').max(80),
@@ -72,14 +73,12 @@ export async function createProject(_prev: unknown, formData: FormData) {
 
     // Handle optional Firebase JSON upload
     const firebaseFile = formData.get('firebaseJson') as File | null
-    let firebaseJsonPath: string | null = null
+    let firebaseCredentials: string | null = null
 
     if (firebaseFile && firebaseFile.size > 0) {
-      const uploadResult = await validateAndUploadFirebaseJson(
-        session.userId, projectId, firebaseFile
-      )
+      const uploadResult = await validateAndEncryptFirebaseJson(firebaseFile)
       if (uploadResult.error) return { error: uploadResult.error }
-      firebaseJsonPath = uploadResult.key ?? null
+      firebaseCredentials = uploadResult.encrypted ?? null
     }
 
     const appId = generateAppId()
@@ -88,12 +87,13 @@ export async function createProject(_prev: unknown, formData: FormData) {
     const [created] = await db
       .insert(projects)
       .values({
-        id:               projectId,
-        userId:           session.userId,
-        name:             parsed.data.name,
+        id:                  projectId,
+        userId:              session.userId,
+        name:                parsed.data.name,
         appId,
         apiKey,
-        firebaseJsonPath,
+        firebaseJsonPath:    null,
+        firebaseCredentials,
       })
       .returning()
 
@@ -103,7 +103,8 @@ export async function createProject(_prev: unknown, formData: FormData) {
       name: parsed.data.name,
       appId,
       apiKey,
-      firebaseJsonPath,
+      firebaseJsonPath: null,
+      firebaseCredentials,
       createdAt: new Date().toISOString(),
     }
 
@@ -154,17 +155,22 @@ export async function updateFirebaseJson(projectId: string, file: File) {
 
     if (!project) return { error: 'Project not found' }
 
-    // Delete old file if exists
+    // Delete old R2 file if exists
     if (project.firebaseJsonPath) {
-      await deleteFromR2(project.firebaseJsonPath)
+      try {
+        await deleteFromR2(project.firebaseJsonPath)
+      } catch {}
     }
 
-    const result = await validateAndUploadFirebaseJson(session.userId, projectId, file)
+    const result = await validateAndEncryptFirebaseJson(file)
     if (result.error) return { error: result.error }
 
     await db
       .update(projects)
-      .set({ firebaseJsonPath: result.key })
+      .set({
+        firebaseCredentials: result.encrypted,
+        firebaseJsonPath: null,
+      })
       .where(eq(projects.id, projectId))
 
     revalidatePath('/dashboard/projects')
@@ -193,9 +199,11 @@ export async function deleteProject(projectId: string) {
       .delete(projects)
       .where(and(eq(projects.id, projectId), eq(projects.userId, session.userId)))
 
-    // Cleanup R2 file
+    // Cleanup legacy R2 file if exists
     if (project.firebaseJsonPath) {
-      await deleteFromR2(project.firebaseJsonPath)
+      try {
+        await deleteFromR2(project.firebaseJsonPath)
+      } catch {}
     }
 
     revalidatePath('/dashboard/projects')
@@ -207,11 +215,9 @@ export async function deleteProject(projectId: string) {
 
 // ── Internal helper ───────────────────────────────────────────────────────────
 
-async function validateAndUploadFirebaseJson(
-  userId: string,
-  projectId: string,
+async function validateAndEncryptFirebaseJson(
   file: File
-): Promise<{ key?: string; error?: string }> {
+): Promise<{ encrypted?: string; error?: string }> {
   if (!file.name.endsWith('.json') && file.type !== 'application/json') {
     return { error: 'Firebase credentials must be a .json file' }
   }
@@ -230,7 +236,7 @@ async function validateAndUploadFirebaseJson(
     return { error: 'Invalid JSON file' }
   }
 
-  const key = buildFirebaseCredentialsKey(userId, projectId)
-  await uploadToR2(key, text)
-  return { key }
+  const encrypted = await encryptText(text)
+  return { encrypted }
 }
+

@@ -77,6 +77,7 @@ export const projects = sqliteTable('projects', {
   appId:            text('app_id').notNull().unique(),
   apiKey:           text('api_key').notNull(),
   firebaseJsonPath: text('firebase_json_path'),
+  firebaseCredentials: text('firebase_credentials'),
   createdAt:        text('created_at').notNull().default(sql`(datetime('now'))`),
 }, (t) => ({
   userIdIdx: index('projects_user_id_idx').on(t.userId),

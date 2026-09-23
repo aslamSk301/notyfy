@@ -17,8 +17,7 @@ OneSignal-class tools are going paid. For a startup that is still finding users,
 NotifyMVP is a dashboard + device SDK + FCM topic fan-out you host yourself:
 
 - Cloudflare **Workers** (app)
-- Cloudflare **D1** (database)
-- Cloudflare **R2** (Firebase service-account JSON)
+- Cloudflare **D1** (database & AES-256 encrypted Firebase credentials)
 - **Firebase Cloud Messaging** (delivery)
 
 No vendor lock on the notification SaaS. You already have Cloudflare and Firebase, or you can create both for free.
@@ -31,7 +30,8 @@ No vendor lock on the notification SaaS. You already have Cloudflare and Firebas
 - System FCM topics: all users, OS, country, language, app version (major + exact)
 - Dashboard: send to all, platform, topic, or a single external user id
 - Google + email login for the dashboard
-- Your Firebase credentials stay in your R2 bucket
+- **Super Admin Portal (`/dashboard/admin`):** Full multi-tenant user management, role assignments, account suspension, and safe cascading deletion
+- **AES-256-GCM Encrypted Credentials:** Firebase service account JSON is securely encrypted at rest in your D1 database (with zero-downtime fallback migration for legacy R2)
 
 ---
 
@@ -131,6 +131,44 @@ Auth: `Authorization: Bearer <apiKey>` (or `x-api-key`).
 **Topics filters:** `type=system|custom`, `active=true|false|all`.
 
 Copy-paste examples: dashboard → **API Keys & Docs**.
+
+---
+
+## Super Admin & User Management
+
+NotifyMVP comes with a built-in Super Admin panel located at `/dashboard/admin` for platform owners and administrators.
+
+### Features
+- **User Directory:** View all registered accounts, their linked auth providers (Google, Email), created projects, status, and join dates.
+- **Role Management:** Assign roles (`user`, `admin`, `superadmin`).
+- **Create & Manage Users:** Create accounts directly with email/password, reset passwords, and toggle user status (`active` vs `suspended`).
+- **Cascading Cleanup on Deletion:** Deleting a user safely and completely purges all their associated projects, registered devices, FCM topics, notification campaigns, delivery logs, and automatically deletes their Firebase Service Account JSON credentials from the Cloudflare R2 bucket.
+
+### Setting up Super Admin Access
+
+You can grant Super Admin access using either method:
+
+#### 1. Environment Variable / Secret (Recommended)
+Add comma-separated emails to `SUPER_ADMIN_EMAILS`:
+
+```bash
+# In .env.local (for local development):
+SUPER_ADMIN_EMAILS="admin@example.com,owner@yourdomain.com"
+```
+
+For production deployment on Cloudflare Workers:
+```bash
+npx wrangler secret put SUPER_ADMIN_EMAILS
+```
+
+#### 2. D1 Database Role (SQL)
+Run D1 migration `0009_super_admin_roles.sql` and update your user record:
+
+```bash
+npx wrangler d1 execute notifymvp-db --command="UPDATE ba_user SET role = 'superadmin' WHERE email = 'your-email@example.com';"
+```
+
+*(Note: If no custom email is set, `contact.earnslash@gmail.com` is configured as the default fallback super admin).*
 
 ---
 

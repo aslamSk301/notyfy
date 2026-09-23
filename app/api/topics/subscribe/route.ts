@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { projects, devices, topics } from '@/lib/db/schema'
 import { subscribeTokensToTopic } from '@/lib/firebase/admin'
-import { downloadFromR2 } from '@/lib/r2/client'
+import { getProjectCredentials } from '@/lib/firebase/credentials-loader'
 import { generateSecureToken } from '@/lib/utils'
 import type { FirebaseCredentials } from '@/lib/firebase/admin'
 
@@ -45,19 +45,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Invalid appId or apiKey' }, { status: 401 })
   }
 
-  if (!project.firebaseJsonPath) {
+  const credentials = (await getProjectCredentials(project)) as unknown as FirebaseCredentials | null
+  if (!credentials) {
     return NextResponse.json({ success: false, error: 'No Firebase credentials configured' }, { status: 422 })
   }
-
-  // Load Firebase credentials
-  const fileContent = await downloadFromR2(project.firebaseJsonPath)
-  if (!fileContent) {
-    return NextResponse.json({ success: false, error: 'Failed to load Firebase credentials' }, { status: 500 })
-  }
-
-  let credentials: FirebaseCredentials
-  try { credentials = JSON.parse(fileContent) as FirebaseCredentials }
-  catch { return NextResponse.json({ success: false, error: 'Invalid Firebase credentials' }, { status: 500 }) }
 
   // Subscribe via FCM IID API
   const result = await subscribeTokensToTopic(credentials, [fcmToken], topic)
