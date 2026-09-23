@@ -78,44 +78,97 @@ export async function registerDevice(input: RegisterDeviceInput) {
     updatedAt:              now,
   }
 
-  if (existingDevice || tokenHolder) {
-    await db.update(devices).set(payload).where(eq(devices.id, subscriptionId))
-  } else {
-    await db.insert(devices).values({
-      id: subscriptionId,
-      createdAt: now,
-      ...payload,
-    })
+  const topicAttrsChanged =
+    !existingDevice ||
+    existingDevice.country !== payload.country ||
+    existingDevice.language !== payload.language ||
+    existingDevice.appVersion !== payload.appVersion ||
+    (existingDevice.osVersion ?? existingDevice.deviceOs) !== payload.osVersion ||
+    existingDevice.fcmToken !== payload.fcmToken
+
+  // If attributes are unchanged and user is unchanged, skip D1 write completely!
+  const sameUser =
+    existingDevice &&
+    (existingDevice.userId === linkedUserId || existingDevice.externalUserId === linkedUserId)
+
+  if (existingDevice && !topicAttrsChanged && sameUser) {
+    return {
+      subscriptionId,
+      status: 'active' as const,
+      topics: buildSystemTopicNames(project.appId, {
+        platform: payload.platform,
+        country: payload.country,
+        language: payload.language,
+        appVersion: payload.appVersion,
+      }),
+    }
+  }
+
+  try {
+    if (existingDevice || tokenHolder) {
+      await db.update(devices).set(payload).where(eq(devices.id, subscriptionId))
+    } else {
+      await db.insert(devices).values({
+        id: subscriptionId,
+        createdAt: now,
+        ...payload,
+      })
+    }
+  } catch (dbErr) {
+    console.warn('[Devices] D1 write failed (temporary block or error):', dbErr)
+    if (existingDevice || tokenHolder) {
+      // Gracefully recover for existing devices to prevent mobile retry loops
+      return {
+        subscriptionId,
+        status: 'active' as const,
+        topics: buildSystemTopicNames(project.appId, {
+          platform: payload.platform,
+          country: payload.country,
+          language: payload.language,
+          appVersion: payload.appVersion,
+        }),
+      }
+    }
+    throw dbErr
   }
 
   let systemTopics: string[] = []
-  try {
-    systemTopics = await syncDeviceSystemTopics({
-      projectId:        project.id,
-      appId:            project.appId,
-      dbDeviceId:       subscriptionId,
-      fcmToken:         payload.fcmToken,
-      previousToken:    existingDevice?.fcmToken ?? tokenHolder?.fcmToken,
-      firebaseJsonPath: project.firebaseJsonPath,
-      next: {
-        platform:   payload.platform,
-        deviceOs:   payload.osVersion,
-        country:    payload.country,
-        language:   payload.language,
+  if (topicAttrsChanged) {
+    try {
+      systemTopics = await syncDeviceSystemTopics({
+        projectId:        project.id,
+        appId:            project.appId,
+        dbDeviceId:       subscriptionId,
+        fcmToken:         payload.fcmToken,
+        previousToken:    existingDevice?.fcmToken ?? tokenHolder?.fcmToken,
+        firebaseJsonPath: project.firebaseJsonPath,
+        next: {
+          platform:   payload.platform,
+          deviceOs:   payload.osVersion,
+          country:    payload.country,
+          language:   payload.language,
+          appVersion: payload.appVersion,
+        },
+        previous: existingDevice
+          ? {
+              platform:   existingDevice.platform,
+              deviceOs:   existingDevice.deviceOs ?? existingDevice.osVersion,
+              country:    existingDevice.country,
+              language:   existingDevice.language,
+              appVersion: existingDevice.appVersion,
+            }
+          : null,
+      })
+    } catch (err) {
+      console.error('[Topics] register sync failed:', err)
+      systemTopics = buildSystemTopicNames(project.appId, {
+        platform: payload.platform,
+        country: payload.country,
+        language: payload.language,
         appVersion: payload.appVersion,
-      },
-      previous: existingDevice
-        ? {
-            platform:   existingDevice.platform,
-            deviceOs:   existingDevice.deviceOs ?? existingDevice.osVersion,
-            country:    existingDevice.country,
-            language:   existingDevice.language,
-            appVersion: existingDevice.appVersion,
-          }
-        : null,
-    })
-  } catch (err) {
-    console.error('[Topics] register sync failed:', err)
+      })
+    }
+  } else {
     systemTopics = buildSystemTopicNames(project.appId, {
       platform: payload.platform,
       country: payload.country,
@@ -149,9 +202,6 @@ export async function updateDevice(input: UpdateDeviceInput) {
     updatedAt: now,
   }
 
-  // `userId` is retained as a compatibility alias because released SDKs use
-  // it for login. Targeted sends query `externalUserId`, so update that field
-  // immediately instead of waiting for the next full device registration.
   if (input.clear === true) {
     updateData.userId = null
     updateData.externalUserId = null
@@ -173,32 +223,65 @@ export async function updateDevice(input: UpdateDeviceInput) {
     if (input.status === 'inactive') updateData.inactiveAt = now
   }
 
-  await db.update(devices).set(updateData).where(eq(devices.id, device.id))
+  // Check if topic attributes changed
+  const topicAttrsChanged =
+    (updateData.country !== undefined && updateData.country !== device.country) ||
+    (updateData.language !== undefined && updateData.language !== device.language) ||
+    (updateData.appVersion !== undefined && updateData.appVersion !== device.appVersion) ||
+    (updateData.osVersion !== undefined && updateData.osVersion !== (device.osVersion ?? device.deviceOs))
+
+  // If this update is identical to existing record and updated recently (< 1 hr ago), skip D1 write!
+  const lastUpdated = device.updatedAt ? new Date(device.updatedAt).getTime() : 0
+  const sameUser =
+    (input.clear && !device.userId && !device.externalUserId) ||
+    (!input.clear &&
+      updateData.userId !== undefined &&
+      (updateData.userId === device.userId || updateData.userId === device.externalUserId))
+
+  const sameAttrs =
+    !topicAttrsChanged &&
+    (updateData.deviceModel === undefined || updateData.deviceModel === device.deviceModel) &&
+    (updateData.notificationPermission === undefined || updateData.notificationPermission === device.notificationPermission) &&
+    (updateData.status === undefined || updateData.status === device.status)
+
+  if (sameUser && sameAttrs) {
+    return { success: true, subscriptionId: device.id }
+  }
 
   try {
-    await syncDeviceSystemTopics({
-      projectId:        project.id,
-      appId:            project.appId,
-      dbDeviceId:       device.id,
-      fcmToken:         device.fcmToken,
-      firebaseJsonPath: project.firebaseJsonPath,
-      next: {
-        platform:   device.platform,
-        deviceOs:   updateData.osVersion ?? device.deviceOs ?? device.osVersion,
-        country:    updateData.country ?? device.country,
-        language:   updateData.language ?? device.language,
-        appVersion: updateData.appVersion ?? device.appVersion,
-      },
-      previous: {
-        platform:   device.platform,
-        deviceOs:   device.deviceOs ?? device.osVersion,
-        country:    device.country,
-        language:   device.language,
-        appVersion: device.appVersion,
-      },
-    })
-  } catch (err) {
-    console.error('[Topics] update sync failed:', err)
+    await db.update(devices).set(updateData).where(eq(devices.id, device.id))
+  } catch (dbErr) {
+    console.warn('[Devices] D1 update failed (temporary block or error):', dbErr)
+    return { success: true, subscriptionId: device.id }
+  }
+
+  // Only sync topics if topic-affecting attributes changed (NOT when only userId or status changed)
+  if (topicAttrsChanged) {
+    try {
+      await syncDeviceSystemTopics({
+        projectId:        project.id,
+        appId:            project.appId,
+        dbDeviceId:       device.id,
+        fcmToken:         device.fcmToken,
+        firebaseJsonPath: project.firebaseJsonPath,
+        next: {
+          platform:   device.platform,
+          deviceOs:   updateData.osVersion ?? device.deviceOs ?? device.osVersion,
+          country:    updateData.country ?? device.country,
+          language:   updateData.language ?? device.language,
+          appVersion: updateData.appVersion ?? device.appVersion,
+        },
+        previous: {
+          platform:   device.platform,
+          deviceOs:   device.deviceOs ?? device.osVersion,
+          country:    device.country,
+          language:   device.language,
+          appVersion: device.appVersion,
+        },
+      })
+    } catch (err) {
+      console.error('[Topics] update sync failed:', err)
+    }
   }
 
   return { success: true, subscriptionId: device.id }

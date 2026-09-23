@@ -105,12 +105,36 @@ export async function POST(req: NextRequest) {
       target = target[0] || 'all'
     }
 
-    // Handle user arrays or user target
-    if (body.include_external_user_ids || body.userIds) {
-      const userIds = body.include_external_user_ids || body.userIds
-      if (Array.isArray(userIds) && userIds.length > 0) {
+    // Handle user arrays or user target (e.g. include_external_user_ids, userIds, external_user_id, userId)
+    const rawUserIds = body.include_external_user_ids ?? body.userIds ?? body.external_user_id ?? body.userId
+    if (rawUserIds) {
+      const userIds = Array.isArray(rawUserIds) ? rawUserIds : [rawUserIds]
+      if (userIds.length > 0 && userIds[0]) {
         target = `user:${userIds[0]}`
       }
+    }
+
+    // Direct FCM tokens support (e.g. tokens, include_player_ids, player_ids)
+    const directTokens = body.tokens || body.include_player_ids || body.player_ids
+    let tokens: string[] | undefined = undefined
+    if (Array.isArray(directTokens) && directTokens.length > 0) {
+      tokens = directTokens.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+    } else if (typeof directTokens === 'string' && directTokens.trim().length > 0) {
+      tokens = [directTokens.trim()]
+    }
+
+    // save_to_db flag: default true, can be set to false / transient: true to avoid writing to database
+    let saveToDb = true
+    if (body.save_to_db !== undefined) {
+      saveToDb = body.save_to_db === true || body.save_to_db === 'true'
+    } else if (body.saveToDb !== undefined) {
+      saveToDb = body.saveToDb === true || body.saveToDb === 'true'
+    } else if (body.transient !== undefined) {
+      saveToDb = !(body.transient === true || body.transient === 'true')
+    } else if (body.skip_db !== undefined) {
+      saveToDb = !(body.skip_db === true || body.skip_db === 'true')
+    } else if (body.log !== undefined) {
+      saveToDb = body.log === true || body.log === 'true'
     }
 
     const targetUrl = body.url || body.deepLink || body.clickAction || body.web_url
@@ -128,6 +152,8 @@ export async function POST(req: NextRequest) {
         url: targetUrl,
         imageUrl,
         data: typeof customData === 'object' ? customData : {},
+        saveToDb,
+        tokens,
       }
     )
 
@@ -145,7 +171,10 @@ export async function POST(req: NextRequest) {
         notificationId: result.notificationId,
         recipients: result.recipientCount ?? 0,
         recipientCount: result.recipientCount ?? 0,
-        message: 'Notification dispatched successfully',
+        savedToDb: saveToDb,
+        message: saveToDb
+          ? 'Notification dispatched successfully'
+          : 'Notification dispatched successfully (transient / not saved to database)',
       },
       { status: 200, headers: CORS_HEADERS }
     )

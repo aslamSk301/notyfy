@@ -48,16 +48,6 @@ async function ensureSystemTopic(
     .limit(1)
 
   if (existing?.id) {
-    await db
-      .update(topics)
-      .set({
-        type: 'system',
-        category: meta.category,
-        value: meta.value,
-        description: meta.description,
-        isActive: true,
-      })
-      .where(eq(topics.id, existing.id))
     return existing.id
   }
 
@@ -104,18 +94,28 @@ export async function syncDeviceSystemTopics(opts: {
 
   const db = await getDb()
 
+  // Pre-fetch existing device topics to avoid issuing duplicate INSERT writes to D1
+  const existingRows = await db
+    .select({ topicId: deviceTopics.topicId })
+    .from(deviceTopics)
+    .where(eq(deviceTopics.deviceId, opts.dbDeviceId))
+  const existingTopicIds = new Set(existingRows.map((r) => r.topicId))
+
   for (const name of nextNames) {
     try {
       const topicId = await ensureSystemTopic(opts.projectId, opts.appId, name)
-      await db
-        .insert(deviceTopics)
-        .values({
-          id: generateSecureToken(16),
-          deviceId: opts.dbDeviceId,
-          topicId,
-          assignedBy: 'system',
-        })
-        .onConflictDoNothing()
+      if (!existingTopicIds.has(topicId)) {
+        await db
+          .insert(deviceTopics)
+          .values({
+            id: generateSecureToken(16),
+            deviceId: opts.dbDeviceId,
+            topicId,
+            assignedBy: 'system',
+          })
+          .onConflictDoNothing()
+        existingTopicIds.add(topicId)
+      }
     } catch (err) {
       console.error('[Topics] Failed to persist system topic', name, err)
     }

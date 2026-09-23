@@ -27,8 +27,10 @@ export const baUser = sqliteTable('ba_user', {
   email:         text('email').notNull().unique(),
   emailVerified: integer('emailVerified', { mode: 'boolean' }).notNull().default(false),
   image:         text('image'),
-  createdAt:     integer('createdAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
-  updatedAt:     integer('updatedAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+  role:          text('role').notNull().default('user'),
+  status:        text('status').notNull().default('active'),
+  createdAt:     text('createdAt').notNull().default(sql`(datetime('now'))`),
+  updatedAt:     text('updatedAt').notNull().default(sql`(datetime('now'))`),
 })
 
 export const baSession = sqliteTable('ba_session', {
@@ -50,12 +52,12 @@ export const baAccount = sqliteTable('ba_account', {
   accessToken:           text('accessToken'),
   refreshToken:          text('refreshToken'),
   idToken:               text('idToken'),
-  accessTokenExpiresAt:  integer('accessTokenExpiresAt', { mode: 'timestamp_ms' }),
-  refreshTokenExpiresAt: integer('refreshTokenExpiresAt', { mode: 'timestamp_ms' }),
+  accessTokenExpiresAt:  text('accessTokenExpiresAt'),
+  refreshTokenExpiresAt: text('refreshTokenExpiresAt'),
   scope:                 text('scope'),
   password:              text('password'),
-  createdAt:             integer('createdAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
-  updatedAt:             integer('updatedAt', { mode: 'timestamp_ms' }).notNull().default(sql`(datetime('now'))`),
+  createdAt:             text('createdAt').notNull().default(sql`(datetime('now'))`),
+  updatedAt:             text('updatedAt').notNull().default(sql`(datetime('now'))`),
 })
 
 export const baVerification = sqliteTable('ba_verification', {
@@ -255,6 +257,8 @@ export const notificationEvents = sqliteTable('notification_events', {
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type User                 = typeof users.$inferSelect
 export type NewUser              = typeof users.$inferInsert
+export type BaUser               = typeof baUser.$inferSelect
+export type NewBaUser            = typeof baUser.$inferInsert
 export type Project              = typeof projects.$inferSelect
 export type NewProject           = typeof projects.$inferInsert
 export type DeviceSubscription   = typeof devices.$inferSelect

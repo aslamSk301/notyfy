@@ -33,6 +33,8 @@ export interface SendNotificationOptions {
   url?: string
   imageUrl?: string
   data?: Record<string, string>
+  saveToDb?: boolean
+  tokens?: string[]
 }
 
 async function estimateTopicSubscribers(projectId: string, topicName: string): Promise<number> {
@@ -101,31 +103,36 @@ export async function sendNotificationCore(
     return { success: false, error: 'Firebase credentials file is not valid JSON' }
   }
 
+  const shouldSaveToDb = options?.saveToDb !== false
   const audience = resolveAudienceTarget(project.appId, target)
   const notificationId = generateSecureToken(16)
   const targetType =
+    options?.tokens && options.tokens.length > 0 ? 'device' :
     audience.kind === 'segment' ? 'segment' :
     audience.kind === 'user' ? 'device' : 'topic'
   const targetValue =
+    options?.tokens && options.tokens.length > 0 ? `${options.tokens.length} direct tokens` :
     audience.kind === 'topic' ? audience.topic :
     audience.kind === 'segment' ? audience.segmentId :
     audience.kind === 'user' ? audience.userId :
     target
 
-  await db.insert(notifications).values({
-    id: notificationId,
-    projectId,
-    name: title,
-    title,
-    body,
-    url: options?.url ?? null,
-    imageUrl: options?.imageUrl ?? null,
-    target,
-    targetType,
-    targetValue,
-    status: 'pending',
-    recipientCount: 0,
-  })
+  if (shouldSaveToDb) {
+    await db.insert(notifications).values({
+      id: notificationId,
+      projectId,
+      name: title,
+      title,
+      body,
+      url: options?.url ?? null,
+      imageUrl: options?.imageUrl ?? null,
+      target,
+      targetType,
+      targetValue,
+      status: 'pending',
+      recipientCount: 0,
+    })
+  }
 
   const fcmSendOptions = {
     url: options?.url,
@@ -138,7 +145,19 @@ export async function sendNotificationCore(
   let finalStatus: 'completed' | 'failed' = 'failed'
 
   try {
-    if (audience.kind === 'topic') {
+    if (options?.tokens && options.tokens.length > 0) {
+      const directTokens = options.tokens.filter(Boolean)
+      const result = await sendMulticastNotification(credentials, directTokens, title, body, fcmSendOptions)
+      successCount = result.successCount
+      failureCount = result.failureCount
+      finalStatus  = successCount > 0 || directTokens.length === 0 ? 'completed' : 'failed'
+      if (result.deadTokens.length > 0) {
+        await db
+          .update(devices)
+          .set({ status: 'inactive', inactiveAt: new Date().toISOString() })
+          .where(inArray(devices.fcmToken, result.deadTokens))
+      }
+    } else if (audience.kind === 'topic') {
       const result = await sendToTopic(
         credentials,
         audience.topic,
@@ -147,10 +166,16 @@ export async function sendNotificationCore(
         fcmSendOptions,
       )
       if (!result.success) {
-        await db.update(notifications)
-          .set({ status: 'failed', sentAt: new Date().toISOString() })
-          .where(eq(notifications.id, notificationId))
-        return { success: false, error: result.error || 'FCM topic send failed', notificationId }
+        if (shouldSaveToDb) {
+          await db.update(notifications)
+            .set({ status: 'failed', sentAt: new Date().toISOString() })
+            .where(eq(notifications.id, notificationId))
+        }
+        return {
+          success: false,
+          error: result.error || 'FCM topic send failed',
+          notificationId: shouldSaveToDb ? notificationId : undefined,
+        }
       }
       successCount = await estimateTopicSubscribers(projectId, audience.topic)
       finalStatus = 'completed'
@@ -228,13 +253,15 @@ export async function sendNotificationCore(
       }
 
       if (tokens.length === 0) {
-        await db.update(notifications)
-          .set({ status: 'failed', sentAt: new Date().toISOString(), recipientCount: 0 })
-          .where(eq(notifications.id, notificationId))
+        if (shouldSaveToDb) {
+          await db.update(notifications)
+            .set({ status: 'failed', sentAt: new Date().toISOString(), recipientCount: 0 })
+            .where(eq(notifications.id, notificationId))
+        }
         return {
           success: false,
           error: `No devices linked to external user "${audience.userId}"`,
-          notificationId,
+          notificationId: shouldSaveToDb ? notificationId : undefined,
           recipientCount: 0,
           matchedDevices: rawDeviceCount,
         }
@@ -253,13 +280,15 @@ export async function sendNotificationCore(
       }
 
       if (successCount === 0) {
-        await db.update(notifications)
-          .set({ status: 'failed', sentAt: new Date().toISOString(), recipientCount: 0 })
-          .where(eq(notifications.id, notificationId))
+        if (shouldSaveToDb) {
+          await db.update(notifications)
+            .set({ status: 'failed', sentAt: new Date().toISOString(), recipientCount: 0 })
+            .where(eq(notifications.id, notificationId))
+        }
         return {
           success: false,
           error: `Linked devices found (${tokens.length}) but FCM delivered to 0`,
-          notificationId,
+          notificationId: shouldSaveToDb ? notificationId : undefined,
           recipientCount: 0,
           matchedDevices: tokens.length,
           failureCount,
@@ -284,14 +313,16 @@ export async function sendNotificationCore(
     }
   }
 
-  await db
-    .update(notifications)
-    .set({ status: finalStatus, sentAt: new Date().toISOString(), recipientCount: successCount })
-    .where(eq(notifications.id, notificationId))
+  if (shouldSaveToDb) {
+    await db
+      .update(notifications)
+      .set({ status: finalStatus, sentAt: new Date().toISOString(), recipientCount: successCount })
+      .where(eq(notifications.id, notificationId))
+  }
 
   return {
     success: true,
-    notificationId,
+    notificationId: shouldSaveToDb ? notificationId : undefined,
     recipientCount: successCount,
     failureCount,
     status: finalStatus === 'completed' ? 'sent' : 'failed',

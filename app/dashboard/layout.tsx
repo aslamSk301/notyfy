@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { getSession } from '@/lib/auth/session'
+import { getSession, isSuperAdmin } from '@/lib/auth/session'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Header } from '@/components/layout/header'
 
@@ -11,9 +11,11 @@ export default async function DashboardLayout({
   const session = await getSession()
   if (!session) redirect('/login')
 
+  const isUserSuperAdmin = await isSuperAdmin(session.email)
+
   return (
     <div className="flex min-h-screen bg-[var(--background)]">
-      <Sidebar />
+      <Sidebar isSuperAdmin={isUserSuperAdmin} />
       <div
         className="flex flex-1 flex-col"
         style={{ marginLeft: 'var(--sidebar-width)' }}
@@ -24,3 +26,4 @@ export default async function DashboardLayout({
     </div>
   )
 }
+

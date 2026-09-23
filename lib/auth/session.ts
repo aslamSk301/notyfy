@@ -70,3 +70,62 @@ export async function requireSession(): Promise<SessionPayload> {
   if (!session) throw new Error('Not authenticated')
   return session
 }
+
+/** Check if an email has Super Admin privileges */
+export async function isSuperAdmin(email?: string | null): Promise<boolean> {
+  if (!email) return false
+  const normalized = email.toLowerCase().trim()
+
+  // 1. Check environment variables
+  let cfEnv: Record<string, string> = {}
+  try {
+    const { getCloudflareContext } = await import('@opennextjs/cloudflare')
+    const { env } = await getCloudflareContext({ async: true })
+    cfEnv = (env as Record<string, string>) || {}
+  } catch {}
+
+  const envList = (
+    process.env.SUPER_ADMIN_EMAILS ||
+    cfEnv.SUPER_ADMIN_EMAILS ||
+    process.env.ADMIN_EMAIL ||
+    cfEnv.ADMIN_EMAIL ||
+    'contact.earnslash@gmail.com'
+  )
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (envList.includes(normalized)) {
+    return true
+  }
+
+  // 2. Check database role in ba_user
+  try {
+    const { getDb } = await import('@/lib/db/client')
+    const { baUser } = await import('@/lib/db/schema')
+    const { eq } = await import('drizzle-orm')
+
+    const db = await getDb()
+    const [user] = await db
+      .select({ role: baUser.role })
+      .from(baUser)
+      .where(eq(baUser.email, normalized))
+      .limit(1)
+
+    if (user?.role === 'superadmin' || user?.role === 'admin') {
+      return true
+    }
+  } catch {}
+
+  return false
+}
+
+/** Get session and ensure Super Admin access or throw */
+export async function requireSuperAdminSession(): Promise<SessionPayload & { isSuperAdmin: true }> {
+  const session = await requireSession()
+  const isAdmin = await isSuperAdmin(session.email)
+  if (!isAdmin) {
+    throw new Error('Access denied: Super Admin privileges required')
+  }
+  return { ...session, isSuperAdmin: true }
+}

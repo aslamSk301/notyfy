@@ -15,6 +15,8 @@ const schema = z.object({
   title:     z.string().min(1).max(100),
   body:      z.string().min(1).max(500),
   _userId:   z.string().min(1), // passed server-side only, never from browser
+  target:    z.string().optional(),
+  saveToDb:  z.boolean().optional(),
 })
 
 export async function POST(request: NextRequest) {
@@ -40,7 +42,11 @@ export async function POST(request: NextRequest) {
     parsed.data._userId,
     parsed.data.projectId,
     parsed.data.title,
-    parsed.data.body
+    parsed.data.body,
+    parsed.data.target ?? 'all',
+    {
+      saveToDb: parsed.data.saveToDb,
+    }
   )
 
   if (!result.success) {

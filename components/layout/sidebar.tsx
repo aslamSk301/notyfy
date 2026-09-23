@@ -11,10 +11,18 @@ import {
   Users,
   Smartphone,
   Key,
+  ShieldCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const navItems = [
+interface NavItem {
+  href: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  badge?: string
+}
+
+const baseNavItems: NavItem[] = [
   { href: '/dashboard',               label: 'Dashboard',     icon: LayoutDashboard },
   { href: '/dashboard/projects',      label: 'Projects',      icon: FolderOpen },
   { href: '/dashboard/notifications', label: 'Notifications', icon: Bell },
@@ -24,8 +32,26 @@ const navItems = [
   { href: '/dashboard/settings',      label: 'Settings',      icon: Settings },
 ]
 
-export function Sidebar() {
+interface SidebarProps {
+  isSuperAdmin?: boolean
+}
+
+export function Sidebar({ isSuperAdmin = false }: SidebarProps) {
   const pathname = usePathname()
+
+  const navItems = [
+    ...baseNavItems,
+    ...(isSuperAdmin
+      ? [
+          {
+            href: '/dashboard/admin',
+            label: 'Super Admin',
+            icon: ShieldCheck,
+            badge: 'Admin',
+          },
+        ]
+      : []),
+  ]
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 flex w-[var(--sidebar-width)] flex-col border-r border-[var(--border)] bg-[var(--card)]">
@@ -39,7 +65,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex flex-1 flex-col gap-1 p-3 overflow-y-auto">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon: Icon, badge }) => {
           const isActive =
             href === '/dashboard'
               ? pathname === '/dashboard'
@@ -50,14 +76,21 @@ export function Sidebar() {
               key={href}
               href={href}
               className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                'flex items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition-colors',
                 isActive
                   ? 'bg-[var(--primary)]/10 text-[var(--primary)]'
                   : 'text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]'
               )}
             >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
+              <div className="flex items-center gap-3">
+                <Icon className="h-4 w-4 shrink-0" />
+                <span>{label}</span>
+              </div>
+              {badge && (
+                <span className="rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                  {badge}
+                </span>
+              )}
             </Link>
           )
         })}
@@ -72,3 +105,4 @@ export function Sidebar() {
     </aside>
   )
 }
+

@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { projects, devices } from '@/lib/db/schema'
 import { generateSecureToken } from '@/lib/utils'
-import { countryFromRequest } from '@/lib/utils/topic-normalizer'
+import { countryFromRequest, buildSystemTopicNames } from '@/lib/utils/topic-normalizer'
 import { syncDeviceSystemTopics } from '@/lib/services/topic-sync'
 
 /**
@@ -79,57 +79,22 @@ export async function POST(request: NextRequest) {
     const oldToken = existing?.fcmToken
     const activeToken = fcmToken || oldToken || `pending_${deviceId}`
     const targetDbDeviceId = existing?.id || generateSecureToken(16)
+    const linkedUserId = externalUserId ?? existing?.externalUserId ?? existing?.userId ?? null
 
-    if (existing) {
-      const linkedUserId = externalUserId ?? existing.externalUserId ?? existing.userId ?? null
-      await db
-        .update(devices)
-        .set({
-          fcmToken:           activeToken,
-          platform,
-          appVersion:         appVersion     ?? undefined,
-          deviceModel:        deviceModel    ?? undefined,
-          deviceOs:           deviceOs       ?? undefined,
-          language:           language       ?? undefined,
-          timezone:           timezone       ?? undefined,
-          country:            country        ?? undefined,
-          // NEVER wipe external user link on plain re-register / sync.
-          ...(externalUserId
-            ? { userId: externalUserId, externalUserId }
-            : linkedUserId
-              ? { userId: linkedUserId, externalUserId: linkedUserId }
-              : {}),
-          sdkVersion:         sdkVersion     ?? undefined,
-          subscriptionStatus: 'subscribed',
-          status:             'active',
-          lastActive:         now,
-          updatedAt:          now,
-        })
-        .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
-    } else {
-      await db.insert(devices).values({
-        id:                     targetDbDeviceId,
-        projectId:              project.id,
-        deviceId,
-        fcmToken:               activeToken,
-        platform,
-        appVersion:             appVersion     ?? null,
-        deviceModel:            deviceModel    ?? null,
-        deviceOs:               deviceOs       ?? null,
-        language:               language       ?? null,
-        timezone:               timezone       ?? null,
-        country:                country        ?? null,
-        userId:                 externalUserId ?? null,
-        externalUserId:         externalUserId ?? null,
-        sdkVersion:             sdkVersion     ?? null,
-        subscriptionStatus:     'subscribed',
-        notificationPermission: 'granted',
-        status:                 'active',
-        lastActive:             now,
-        createdAt:              now,
-        updatedAt:              now,
-      })
-    }
+    const topicAttrsChanged =
+      !existing ||
+      existing.country !== country ||
+      (language !== undefined && existing.language !== language) ||
+      (appVersion !== undefined && existing.appVersion !== appVersion) ||
+      (deviceOs !== undefined && (existing.deviceOs ?? existing.osVersion) !== deviceOs) ||
+      oldToken !== activeToken
+
+    const lastUpdated = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0
+    const isRecent = Date.now() - lastUpdated < 60 * 60 * 1000 // 1 hour
+    const sameUser =
+      existing &&
+      (existing.userId === (externalUserId ?? linkedUserId) ||
+        existing.externalUserId === (externalUserId ?? linkedUserId))
 
     const nextAttrs = {
       platform,
@@ -137,6 +102,91 @@ export async function POST(request: NextRequest) {
       country:    country ?? existing?.country,
       language:   language ?? existing?.language,
       appVersion: appVersion ?? existing?.appVersion,
+    }
+
+    // If completely identical to current DB row, skip D1 write completely!
+    if (existing && !topicAttrsChanged && sameUser) {
+      return NextResponse.json({
+        success: true,
+        message: 'Device already registered and up to date',
+        subscriptionId: targetDbDeviceId,
+        data: {
+          deviceId,
+          platform,
+          subscriptionId: targetDbDeviceId,
+          topics: buildSystemTopicNames(project.appId, nextAttrs),
+          externalUserId: linkedUserId,
+        },
+      })
+    }
+
+    try {
+      if (existing) {
+        await db
+          .update(devices)
+          .set({
+            fcmToken:           activeToken,
+            platform,
+            appVersion:         appVersion     ?? undefined,
+            deviceModel:        deviceModel    ?? undefined,
+            deviceOs:           deviceOs       ?? undefined,
+            language:           language       ?? undefined,
+            timezone:           timezone       ?? undefined,
+            country:            country        ?? undefined,
+            // NEVER wipe external user link on plain re-register / sync.
+            ...(externalUserId
+              ? { userId: externalUserId, externalUserId }
+              : linkedUserId
+                ? { userId: linkedUserId, externalUserId: linkedUserId }
+                : {}),
+            sdkVersion:         sdkVersion     ?? undefined,
+            subscriptionStatus: 'subscribed',
+            status:             'active',
+            lastActive:         now,
+            updatedAt:          now,
+          })
+          .where(and(eq(devices.projectId, project.id), eq(devices.deviceId, deviceId)))
+      } else {
+        await db.insert(devices).values({
+          id:                     targetDbDeviceId,
+          projectId:              project.id,
+          deviceId,
+          fcmToken:               activeToken,
+          platform,
+          appVersion:             appVersion     ?? null,
+          deviceModel:            deviceModel    ?? null,
+          deviceOs:               deviceOs       ?? null,
+          language:               language       ?? null,
+          timezone:               timezone       ?? null,
+          country:                country        ?? null,
+          userId:                 externalUserId ?? null,
+          externalUserId:         externalUserId ?? null,
+          sdkVersion:             sdkVersion     ?? null,
+          subscriptionStatus:     'subscribed',
+          notificationPermission: 'granted',
+          status:                 'active',
+          lastActive:             now,
+          createdAt:              now,
+          updatedAt:              now,
+        })
+      }
+    } catch (writeErr) {
+      console.warn('[Device Register] D1 write failed (temporary block or error):', writeErr)
+      if (existing) {
+        return NextResponse.json({
+          success: true,
+          message: 'Device already registered (cached)',
+          subscriptionId: targetDbDeviceId,
+          data: {
+            deviceId,
+            platform,
+            subscriptionId: targetDbDeviceId,
+            topics: buildSystemTopicNames(project.appId, nextAttrs),
+            externalUserId: linkedUserId,
+          },
+        })
+      }
+      throw writeErr
     }
 
     const previousAttrs = existing
@@ -150,19 +200,24 @@ export async function POST(request: NextRequest) {
       : null
 
     let topicNames: string[] = []
-    try {
-      topicNames = await syncDeviceSystemTopics({
-        projectId:        project.id,
-        appId:            project.appId,
-        dbDeviceId:       targetDbDeviceId,
-        fcmToken:         activeToken,
-        previousToken:    oldToken,
-        firebaseJsonPath: project.firebaseJsonPath,
-        next:             nextAttrs,
-        previous:         previousAttrs,
-      })
-    } catch (topicErr) {
-      console.error('[Topics] System topic sync failed:', topicErr)
+    if (topicAttrsChanged) {
+      try {
+        topicNames = await syncDeviceSystemTopics({
+          projectId:        project.id,
+          appId:            project.appId,
+          dbDeviceId:       targetDbDeviceId,
+          fcmToken:         activeToken,
+          previousToken:    oldToken,
+          firebaseJsonPath: project.firebaseJsonPath,
+          next:             nextAttrs,
+          previous:         previousAttrs,
+        })
+      } catch (topicErr) {
+        console.error('[Topics] System topic sync failed:', topicErr)
+        topicNames = buildSystemTopicNames(project.appId, nextAttrs)
+      }
+    } else {
+      topicNames = buildSystemTopicNames(project.appId, nextAttrs)
     }
 
     const finalExternalUserId = externalUserId ?? existing?.externalUserId ?? existing?.userId ?? null
