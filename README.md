@@ -6,7 +6,7 @@ Clone it. Deploy it on **your** Cloudflare account. Plug in **your** Firebase pr
 
 If this is useful, **star the repo** — it is the only “pricing page” we have.
 
-[Deploy on Cloudflare](./DEPLOY.md) · [MIT License](./LICENSE) · [LinkedIn](https://www.linkedin.com/in/YOUR-PROFILE)
+[Deploy on Cloudflare](./DEPLOY.md) · [MIT License](./LICENSE) · [LinkedIn](https://www.linkedin.com/in/aslam-shahmadar-editbysk/)
 
 ---
 
@@ -175,8 +175,7 @@ npx wrangler d1 execute notifymvp-db --command="UPDATE ba_user SET role = 'super
 ## Like / follow
 
 - Star this GitHub repo if you deploy it or fork it
-- Follow on LinkedIn: [https://www.linkedin.com/in/YOUR-PROFILE](https://www.linkedin.com/in/YOUR-PROFILE)  
-  *(paste your profile URL here)*
+- Follow on LinkedIn: [https://www.linkedin.com/in/aslam-shahmadar-editbysk/](https://www.linkedin.com/in/aslam-shahmadar-editbysk/)
 
 ---
 
