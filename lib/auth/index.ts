@@ -15,8 +15,6 @@ import { getDb } from '@/lib/db/client'
 import { baUser, baSession, baAccount, baVerification } from '@/lib/db/schema'
 
 // ── Auth instance (lazy singleton) ───────────────────────────────────────────
-
-// ── Auth instance (lazy singleton) ───────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _auth: any = null
 
@@ -32,11 +30,11 @@ export async function getAuth() {
     cfEnv = env || {}
   } catch {}
 
-  const secret      = process.env.BETTER_AUTH_SECRET || cfEnv.BETTER_AUTH_SECRET
-  const baseURL     = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? cfEnv.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const clientId    = process.env.GOOGLE_CLIENT_ID || cfEnv.GOOGLE_CLIENT_ID
+  const secret       = process.env.BETTER_AUTH_SECRET || cfEnv.BETTER_AUTH_SECRET
+  const baseURL      = process.env.BETTER_AUTH_URL || cfEnv.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || cfEnv.NEXT_PUBLIC_APP_URL || 'https://notify.earnslash.com'
+  const clientId     = process.env.GOOGLE_CLIENT_ID || cfEnv.GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || cfEnv.GOOGLE_CLIENT_SECRET
-  const dashApiKey  = process.env.BETTER_AUTH_API_KEY || cfEnv.BETTER_AUTH_API_KEY
+  const dashApiKey   = process.env.BETTER_AUTH_API_KEY || cfEnv.BETTER_AUTH_API_KEY
 
   if (!secret) throw new Error('BETTER_AUTH_SECRET is not set')
   if (!clientId || !clientSecret) throw new Error('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set')
@@ -44,6 +42,11 @@ export async function getAuth() {
   _auth = betterAuth({
     secret,
     baseURL,
+    trustedOrigins: [
+      'https://notify.earnslash.com',
+      'http://localhost:3000',
+      baseURL,
+    ].filter(Boolean),
     database: drizzleAdapter(db, {
       provider: 'sqlite',
       schema: {
@@ -59,7 +62,14 @@ export async function getAuth() {
         clientSecret,
       },
     },
-    plugins: [dash({ apiKey: dashApiKey })],
+    plugins: [
+      dash({
+        apiKey: dashApiKey,
+        activityTracking: {
+          enabled: false,
+        },
+      }),
+    ],
     emailAndPassword: {
       enabled: true,
     },

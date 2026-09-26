@@ -201,7 +201,8 @@ export async function createAdminUser(raw: {
     const userId = generateSecureToken(16)
     const accountId = generateSecureToken(16)
     const hashedPassword = await hashPassword(password)
-    const nowIso = new Date().toISOString()
+    const now = new Date()
+    const nowIso = now.toISOString()
 
     // 1. Insert into ba_user
     await db.insert(baUser).values({
@@ -212,8 +213,8 @@ export async function createAdminUser(raw: {
       image: null,
       role,
       status: 'active',
-      createdAt: nowIso,
-      updatedAt: nowIso,
+      createdAt: now,
+      updatedAt: now,
     })
 
     // 2. Insert into ba_account (credential provider)
@@ -223,8 +224,8 @@ export async function createAdminUser(raw: {
       providerId: 'credential',
       userId,
       password: hashedPassword,
-      createdAt: nowIso,
-      updatedAt: nowIso,
+      createdAt: now,
+      updatedAt: now,
     })
 
     // 3. Insert into users table for foreign key integrity
@@ -283,7 +284,7 @@ export async function updateAdminUser(raw: {
     }
 
     const updates: Partial<typeof baUser.$inferInsert> = {
-      updatedAt: new Date().toISOString(),
+      updatedAt: new Date(),
     }
 
     if (name) updates.name = name.trim()
@@ -321,7 +322,8 @@ export async function updateAdminUser(raw: {
     // Handle Password Update / Reset
     if (password && password.trim().length >= 6) {
       const hashedPassword = await hashPassword(password.trim())
-      const nowIso = new Date().toISOString()
+      const now = new Date()
+      const nowIso = now.toISOString()
 
       // Check if user has an existing credential account
       const [existingCredentialAcc] = await db
@@ -340,7 +342,7 @@ export async function updateAdminUser(raw: {
           .update(baAccount)
           .set({
             password: hashedPassword,
-            updatedAt: nowIso,
+            updatedAt: now,
           })
           .where(eq(baAccount.id, existingCredentialAcc.id))
       } else {
@@ -351,8 +353,8 @@ export async function updateAdminUser(raw: {
           providerId: 'credential',
           userId,
           password: hashedPassword,
-          createdAt: nowIso,
-          updatedAt: nowIso,
+          createdAt: now,
+          updatedAt: now,
         })
       }
 

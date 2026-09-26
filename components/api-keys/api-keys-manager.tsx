@@ -13,11 +13,14 @@ import {
   Sparkles,
   ExternalLink,
   ShieldCheck,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
 import { toast } from 'sonner'
+import { maskApiKey } from '@/lib/utils'
 
 interface ProjectItem {
   id: string
@@ -33,6 +36,7 @@ interface ApiKeysManagerProps {
 export function ApiKeysManager({ projects }: ApiKeysManagerProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(projects[0]?.id ?? '')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [showApiKey, setShowApiKey] = useState(false)
   const [activeSnippetTab, setActiveSnippetTab] = useState<
     'nodejs' | 'curl' | 'python' | 'php' | 'to-user' | 'list' | 'web-sdk'
   >('nodejs')
@@ -50,9 +54,9 @@ export function ApiKeysManager({ projects }: ApiKeysManagerProps) {
   const apiKey = selectedProject?.apiKey || 'YOUR_REST_API_KEY'
   const appId = selectedProject?.appId || 'YOUR_APP_ID'
 
-  const snippets = {
+  const buildSnippets = (currentKey: string) => ({
     nodejs: `// Broadcast (all users / platform / topic)
-const NOTIFY_API_KEY = "${apiKey}";
+const NOTIFY_API_KEY = "${currentKey}";
 const NOTIFY_BASE_URL = "${baseUrl}/api/v1";
 
 async function sendPushNotification() {
@@ -79,7 +83,7 @@ async function sendPushNotification() {
 sendPushNotification();`,
 
     curl: `curl -X POST "${baseUrl}/api/v1/notifications" \\
-  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Authorization: Bearer ${currentKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "title": "Welcome Offer!",
@@ -89,7 +93,7 @@ sendPushNotification();`,
 
     python: `import requests
 
-API_KEY = "${apiKey}"
+API_KEY = "${currentKey}"
 URL = "${baseUrl}/api/v1/notifications"
 
 headers = {
@@ -107,7 +111,7 @@ response = requests.post(URL, json=payload, headers=headers)
 print("Response:", response.json())`,
 
     php: `<?php
-$apiKey = "${apiKey}";
+$apiKey = "${currentKey}";
 $url = "${baseUrl}/api/v1/notifications";
 
 $payload = [
@@ -133,7 +137,7 @@ echo $response;
 
     'to-user': `// Send to ONE user by External User ID (all their devices)
 // App must call NotifyMVP.setExternalUserId("USER_ID") / login() first.
-const NOTIFY_API_KEY = "${apiKey}";
+const NOTIFY_API_KEY = "${currentKey}";
 const NOTIFY_BASE_URL = "${baseUrl}/api/v1";
 
 async function sendToUser(externalUserId) {
@@ -163,7 +167,7 @@ sendToUser("firebase_uid_or_your_db_user_id");
 
 /* cURL equivalent:
 curl -X POST "${baseUrl}/api/v1/notifications" \\
-  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Authorization: Bearer ${currentKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "title": "Your order is ready",
@@ -173,7 +177,7 @@ curl -X POST "${baseUrl}/api/v1/notifications" \\
 */`,
 
     list: `// List devices + topics for your custom dashboard
-const NOTIFY_API_KEY = "${apiKey}";
+const NOTIFY_API_KEY = "${currentKey}";
 const NOTIFY_BASE_URL = "${baseUrl}/api/v1";
 
 async function listDevices() {
@@ -213,10 +217,10 @@ listTopics();
 
 /* cURL:
 curl "${baseUrl}/api/v1/devices?limit=20&page=1" \\
-  -H "Authorization: Bearer ${apiKey}"
+  -H "Authorization: Bearer ${currentKey}"
 
 curl "${baseUrl}/api/v1/topics" \\
-  -H "Authorization: Bearer ${apiKey}"
+  -H "Authorization: Bearer ${currentKey}"
 */`,
 
     'web-sdk': `// Register device + link External User ID (from your app / auth)
@@ -225,7 +229,7 @@ fetch("${baseUrl}/api/device/register", {
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     appId: "${appId}",
-    apiKey: "${apiKey}",
+    apiKey: "${currentKey}",
     fcmToken: "USER_FCM_TOKEN",
     platform: "android", // "android" | "ios" | "flutter" | "react-native"
     deviceId: "unique_device_id_123",
@@ -237,7 +241,10 @@ fetch("${baseUrl}/api/device/register", {
 // Android / RN: NotifyMVP.setExternalUserId("firebase_uid_or_your_db_user_id")
 // Flutter:      NotifyMVP.login("firebase_uid_or_your_db_user_id")
 // iOS:          await NotifyMVP.setExternalUserId("firebase_uid_or_your_db_user_id")`,
-  }
+  })
+
+  const realSnippets = buildSnippets(apiKey)
+  const displaySnippets = buildSnippets(showApiKey ? apiKey : maskApiKey(apiKey))
 
   if (projects.length === 0) {
     return (
@@ -326,25 +333,44 @@ fetch("${baseUrl}/api/device/register", {
             <div className="rounded-lg border border-[var(--border)] bg-[var(--muted)]/40 p-3.5 space-y-2">
               <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)]">
                 <span className="font-semibold uppercase tracking-wider">REST API Key</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleCopy(selectedProject?.apiKey || '', 'API Key')}
-                  className="h-7 gap-1 text-xs"
-                >
-                  {copiedKey === 'API Key' ? (
-                    <>
-                      <Check className="h-3.5 w-3.5 text-emerald-500" /> Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5" /> Copy
-                    </>
-                  )}
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="h-7 gap-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    title={showApiKey ? 'Hide API Key' : 'Show API Key'}
+                  >
+                    {showApiKey ? (
+                      <>
+                        <EyeOff className="h-3.5 w-3.5" /> Hide
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3.5 w-3.5" /> Show
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCopy(selectedProject?.apiKey || '', 'API Key')}
+                    className="h-7 gap-1 text-xs"
+                  >
+                    {copiedKey === 'API Key' ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-500" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" /> Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
-              <div className="font-mono text-sm font-bold text-[var(--primary)] break-all select-all">
-                {selectedProject?.apiKey}
+              <div className="font-mono text-sm font-bold text-[var(--primary)] break-all select-all tracking-wider">
+                {showApiKey ? selectedProject?.apiKey : maskApiKey(selectedProject?.apiKey || '')}
               </div>
             </div>
           </div>
@@ -435,7 +461,7 @@ fetch("${baseUrl}/api/device/register", {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleCopy(snippets[activeSnippetTab], 'Code snippet')}
+              onClick={() => handleCopy(realSnippets[activeSnippetTab], 'Code snippet')}
               className="absolute right-3 top-3 z-10 gap-1.5 text-xs bg-[var(--card)]"
             >
               {copiedKey === 'Code snippet' ? (
@@ -450,7 +476,7 @@ fetch("${baseUrl}/api/device/register", {
             </Button>
 
             <pre className="overflow-x-auto rounded-lg bg-[var(--muted)] p-4 text-xs font-mono text-[var(--foreground)] leading-relaxed border border-[var(--border)]">
-              <code>{snippets[activeSnippetTab]}</code>
+              <code>{displaySnippets[activeSnippetTab]}</code>
             </pre>
           </div>
         </CardContent>
